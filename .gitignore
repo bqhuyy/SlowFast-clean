@@ -4,3 +4,4 @@ __pycache__
 detectron2_repo
 slowfast.egg-info
 checkpoints
+.ipynb_checkpoints
