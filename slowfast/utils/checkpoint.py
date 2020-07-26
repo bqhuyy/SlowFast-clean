@@ -104,7 +104,7 @@ def is_checkpoint_epoch(cfg, cur_epoch, multigrid_schedule=None):
     return (cur_epoch + 1) % cfg.TRAIN.CHECKPOINT_PERIOD == 0
 
 
-def save_checkpoint(path_to_job, model, optimizer, epoch, cfg):
+def save_checkpoint(path_to_job, model, optimizer, epoch, cfg, best_top1_err, best_epoch, is_best=False):
     """
     Save a checkpoint.
     Args:
@@ -128,9 +128,14 @@ def save_checkpoint(path_to_job, model, optimizer, epoch, cfg):
         "model_state": normalized_sd,
         "optimizer_state": optimizer.state_dict(),
         "cfg": cfg.dump(),
+        "best_top1_err": best_top1_err,
+        "best_epoch": best_epoch,
     }
     # Write the checkpoint.
-    path_to_checkpoint = get_path_to_checkpoint(path_to_job, epoch + 1)
+    if not is_best:
+        path_to_checkpoint = get_path_to_checkpoint(path_to_job, epoch + 1)
+    else:
+        path_to_checkpoint = os.path.join(path_to_job, "slowfast_best.pyth")
     with PathManager.open(path_to_checkpoint, "wb") as f:
         torch.save(checkpoint, f)
     return path_to_checkpoint
@@ -259,6 +264,8 @@ def load_checkpoint(
                     )
         ms.load_state_dict(state_dict, strict=False)
         epoch = -1
+        best_top1_err = -1
+        best_epoch = -1
     else:
         # Load the checkpoint on CPU to avoid GPU mem spike.
         with PathManager.open(path_to_checkpoint, "rb") as f:
@@ -284,7 +291,15 @@ def load_checkpoint(
             epoch = checkpoint["epoch"]
         else:
             epoch = -1
-    return epoch
+        if "best_top1_err" in checkpoint.keys():
+            best_top1_err = checkpoint["best_top1_err"]
+        else:
+            best_top1_err = -1
+        if "best_epoch" in checkpoint.keys():
+            best_epoch = checkpoint["best_epoch"]
+        else:
+            best_epoch = -1
+    return epoch, best_top1_err, best_epoch
 
 
 def sub_to_normal_bn(sd):
@@ -388,7 +403,6 @@ def normal_to_sub_bn(checkpoint_sd, model_sd):
                 )
     return checkpoint_sd
 
-
 def load_test_checkpoint(cfg, model):
     """
     Loading checkpoint logic for testing.
@@ -398,7 +412,7 @@ def load_test_checkpoint(cfg, model):
         # If no checkpoint found in MODEL_VIS.CHECKPOINT_FILE_PATH or in the current
         # checkpoint folder, try to load checkpoint from
         # TEST.CHECKPOINT_FILE_PATH and test it.
-        load_checkpoint(
+        checkpoint_epoch, best_top1_err, best_epoch = load_checkpoint(
             cfg.TEST.CHECKPOINT_FILE_PATH,
             model,
             cfg.NUM_GPUS > 1,
@@ -408,12 +422,12 @@ def load_test_checkpoint(cfg, model):
         )
     elif has_checkpoint(cfg.OUTPUT_DIR):
         last_checkpoint = get_last_checkpoint(cfg.OUTPUT_DIR)
-        load_checkpoint(last_checkpoint, model, cfg.NUM_GPUS > 1)
+        checkpoint_epoch, best_top1_err, best_epoch = load_checkpoint(last_checkpoint, model, cfg.NUM_GPUS > 1)
     elif cfg.TRAIN.CHECKPOINT_FILE_PATH != "":
         # If no checkpoint found in TEST.CHECKPOINT_FILE_PATH or in the current
         # checkpoint folder, try to load checkpoint from
         # TRAIN.CHECKPOINT_FILE_PATH and test it.
-        load_checkpoint(
+        checkpoint_epoch, best_top1_err, best_epoch = load_checkpoint(
             cfg.TRAIN.CHECKPOINT_FILE_PATH,
             model,
             cfg.NUM_GPUS > 1,
@@ -425,6 +439,11 @@ def load_test_checkpoint(cfg, model):
         logger.info(
             "Unknown way of loading checkpoint. Using with random initialization, only for debugging."
         )
+        epoch = -1
+        best_top1_err = -1
+        best_epoch = -1
+        
+    return checkpoint_epoch, best_top1_err, best_epoch
 
 
 def load_train_checkpoint(cfg, model, optimizer):
@@ -434,13 +453,13 @@ def load_train_checkpoint(cfg, model, optimizer):
     if cfg.TRAIN.AUTO_RESUME and has_checkpoint(cfg.OUTPUT_DIR):
         last_checkpoint = get_last_checkpoint(cfg.OUTPUT_DIR)
         logger.info("Load from last checkpoint, {}.".format(last_checkpoint))
-        checkpoint_epoch = load_checkpoint(
+        checkpoint_epoch, best_top1_err, best_epoch = load_checkpoint(
             last_checkpoint, model, cfg.NUM_GPUS > 1, optimizer
         )
         start_epoch = checkpoint_epoch + 1
     elif cfg.TRAIN.CHECKPOINT_FILE_PATH != "":
         logger.info("Load from given checkpoint file.")
-        checkpoint_epoch = load_checkpoint(
+        checkpoint_epoch, best_top1_err, best_epoch = load_checkpoint(
             cfg.TRAIN.CHECKPOINT_FILE_PATH,
             model,
             cfg.NUM_GPUS > 1,
@@ -451,5 +470,7 @@ def load_train_checkpoint(cfg, model, optimizer):
         start_epoch = checkpoint_epoch + 1
     else:
         start_epoch = 0
+        best_top1_err = -1
+        best_epoch = -1
 
-    return start_epoch
+    return start_epoch, best_top1_err, best_epoch

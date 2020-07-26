@@ -242,7 +242,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
         val_meter.iter_tic()
 
     # Log epoch stats.
-    val_meter.log_epoch_stats(cur_epoch)
+    epoch_stats = val_meter.log_epoch_stats(cur_epoch)
     # write to tensorboard format if available.
     if writer is not None:
         if cfg.DETECTION.ENABLE:
@@ -260,6 +260,8 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
         )
 
     val_meter.reset()
+    
+    return epoch_stats
 
 
 def calculate_and_update_precise_bn(loader, model, num_iters=200):
@@ -366,7 +368,7 @@ def train(cfg):
     optimizer = optim.construct_optimizer(model, cfg)
 
     # Load a checkpoint to resume training if applicable.
-    start_epoch = cu.load_train_checkpoint(cfg, model, optimizer)
+    start_epoch, best_top1_err, best_epoch = cu.load_train_checkpoint(cfg, model, optimizer)
 
     # Create the video train and val loaders.
     train_loader = loader.construct_loader(cfg, "train")
@@ -439,12 +441,37 @@ def train(cfg):
         if cu.is_checkpoint_epoch(
             cfg, cur_epoch, None if multigrid is None else multigrid.schedule
         ):
-            cu.save_checkpoint(cfg.OUTPUT_DIR, model, optimizer, cur_epoch, cfg)
+            cu.save_checkpoint(	
+                path_to_job=cfg.OUTPUT_DIR, 	
+                model=model, 	
+                optimizer=optimizer, 	
+                epoch=cur_epoch, 	
+                cfg=cfg,	
+                best_top1_err=best_top1_err,	
+                best_epoch=best_epoch,	
+            )
         # Evaluate the model on validation set.
         if misc.is_eval_epoch(
             cfg, cur_epoch, None if multigrid is None else multigrid.schedule
         ):
             eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer)
+            
+            if best_top1_err == -1 or epoch_stats['top1_err'] < best_top1_err:	
+                best_top1_err = epoch_stats['top1_err']	
+                best_epoch = cur_epoch	
+                cu.save_checkpoint(	
+                    path_to_job=cfg.OUTPUT_DIR, 	
+                    model=model, 	
+                    optimizer=optimizer, 	
+                    epoch=cur_epoch, 	
+                    cfg=cfg,	
+                    best_top1_err=best_top1_err,	
+                    best_epoch=best_epoch,	
+                    is_best=True	
+                )
+            
+            logger.info("Best top1_err: {}".format(best_top1_err))	
+            logger.info("Best epoch: {}".format(best_epoch))
 
     if writer is not None:
         writer.close()
