@@ -403,6 +403,7 @@ def normal_to_sub_bn(checkpoint_sd, model_sd):
                 )
     return checkpoint_sd
 
+
 def load_test_checkpoint(cfg, model):
     """
     Loading checkpoint logic for testing.
