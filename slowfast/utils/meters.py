@@ -685,7 +685,7 @@ class ValMeter(object):
             stats["min_top5_err"] = self.min_top5_err
 
         logging.log_json_stats(stats)
-        
+
         return stats
 
 
