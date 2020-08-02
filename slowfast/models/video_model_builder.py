@@ -1013,4 +1013,132 @@ class ResNetTSM(nn.Module):
         else:
             x = self.head(x)
         return x
+
+
+from . import mobilenetv3_helper
     
+@MODEL_REGISTRY.register()
+class MobileNetV3(nn.Module):
+    """
+    SlowFast model builder for SlowFast network.
+
+    Christoph Feichtenhofer, Haoqi Fan, Jitendra Malik, and Kaiming He.
+    "SlowFast networks for video recognition."
+    https://arxiv.org/pdf/1812.03982.pdf
+    """
+
+    def __init__(self, cfg):
+        """
+        The `__init__` method of any subclass should also contain these
+            arguments.
+        Args:
+            cfg (CfgNode): model building configs, details are in the
+                comments of the config file.
+        """
+        super(MobileNetV3, self).__init__()
+        self.norm_module = nn.BatchNorm2d
+        self.enable_detection = cfg.DETECTION.ENABLE
+        self.num_pathways = 1
+        self.cfg = cfg
+        self._construct_network(cfg)
+        init_helper.init_weights(
+            self, cfg.MODEL.FC_INIT_STD, cfg.RESNET.ZERO_INIT_FINAL_BN
+        )
+
+    def _construct_network(self, cfg):
+        """
+        Builds a SlowFast model. The first pathway is the Slow pathway and the
+            second pathway is the Fast pathway.
+        Args:
+            cfg (CfgNode): model building configs, details are in the
+                comments of the config file.
+        """
+        assert cfg.MODEL.ARCH in _POOL1.keys()
+        pool_size = _POOL1[cfg.MODEL.ARCH]
+        
+        self.s1 = mobilenetv3_helper.MobileNetV3Stem(
+            dim_in=cfg.DATA.INPUT_CHANNEL_NUM,
+            beta_inv=[1],
+        )
+        
+        self.s2 = mobilenetv3_helper.MobilenetV3Stage(
+            dim_in=[16],
+            beta_inv=[1],
+            stage_idx=2,
+            n_segment=[cfg.DATA.NUM_FRAMES],
+            n_div=[8],
+        )
+        
+        self.s3 = mobilenetv3_helper.MobilenetV3Stage(
+            dim_in=[24],
+            beta_inv=[1],
+            stage_idx=3,
+            n_segment=[cfg.DATA.NUM_FRAMES],
+            n_div=[8],
+        )
+        
+        self.s4 = mobilenetv3_helper.MobilenetV3Stage(
+            dim_in=[40],
+            beta_inv=[1],
+            stage_idx=4,
+            n_segment=[cfg.DATA.NUM_FRAMES],
+            n_div=[8],
+        )
+        
+        self.s5 = mobilenetv3_helper.MobilenetV3Stage(
+            dim_in=[112],
+            beta_inv=[1],
+            stage_idx=5,
+            n_segment=[cfg.DATA.NUM_FRAMES],
+            n_div=[8],
+        )
+
+        if self.enable_detection:
+            self.head = head_helper.ResNetRoIHead(
+                dim_in=[960],
+                num_classes=cfg.MODEL.NUM_CLASSES,
+                pool_size=[[1, 1]],
+                resolution=[[cfg.DETECTION.ROI_XFORM_RESOLUTION] * 2],
+                scale_factor=[cfg.DETECTION.SPATIAL_SCALE_FACTOR],
+                dropout_rate=cfg.MODEL.DROPOUT_RATE,
+                act_func=cfg.MODEL.HEAD_ACT,
+                aligned=cfg.DETECTION.ALIGNED,
+            )
+        else:
+            self.head = head_helper.ResNetBasicHead(
+                dim_in=[960],
+                num_classes=cfg.MODEL.NUM_CLASSES,
+                pool_size=[None, None]
+                if cfg.MULTIGRID.SHORT_CYCLE
+                else [
+                    [
+                        cfg.DATA.NUM_FRAMES // pool_size[0][0],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[0][1],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[0][2],
+                    ]
+                ],  # None for AdaptiveAvgPool3d((1, 1, 1))
+                dropout_rate=cfg.MODEL.DROPOUT_RATE,
+                act_func=cfg.MODEL.HEAD_ACT,
+            )
+
+    def forward(self, x, bboxes=None, reshape=True):
+        if reshape:
+            # (N, C, T, H, W) -> (N*T, C, H, W)
+            n, c, t, h, w = x[0].size()
+            x[0] = x[0].transpose(1, 2).contiguous().view(n*t, c, h, w)
+        else:
+            # (N, T*C, H, W) -> (N*T, C, H, W)
+            x[0] = x[0].view((-1, 3) + x[0].size()[-2:])
+        x = self.s1(x)
+        x = self.s2(x)
+        x = self.s3(x)
+        x = self.s4(x)
+        x = self.s5(x)
+        # (N*T, C, H, W) -> (N, C, T, H, W)
+        nt, c, h, w = x[0].size()
+        x[0] = x[0].view(nt // self.cfg.DATA.NUM_FRAMES, self.cfg.DATA.NUM_FRAMES, c, h, w).transpose(1, 2)
+        if self.enable_detection:
+            x = self.head(x, bboxes)
+        else:
+            x = self.head(x)
+        return x
