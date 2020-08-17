@@ -493,7 +493,7 @@ def train(cfg):
                 )
             
             logger.info("Best top1_err: {}".format(best_top1_err))	
-            logger.info("Best epoch: {}".format(best_epoch))
+            logger.info("Best epoch: {}".format((best_epoch+1) if best_epoch != -1 else -1))
 
     if writer is not None:
         writer.close()
