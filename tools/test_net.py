@@ -4,7 +4,10 @@
 """Multi-view test a video classification model."""
 
 import numpy as np
+import os
+import pickle
 import torch
+from fvcore.common.file_io import PathManager
 
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.distributed as du
@@ -65,13 +68,8 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
         if cfg.DETECTION.ENABLE:
             # Compute the predictions.
             preds = model(inputs, meta["boxes"])
-            ori_boxes = meta["ori_boxes"].cpu()
-            metadata = meta["metadata"].cpu()
-
-            if cfg.NUM_GPUS > 1:
-                preds = torch.cat(du.all_gather_unaligned(preds), dim=0)
-                ori_boxes = torch.cat(du.all_gather_unaligned(ori_boxes), dim=0)
-                metadata = torch.cat(du.all_gather_unaligned(metadata), dim=0)
+            ori_boxes = meta["ori_boxes"]
+            metadata = meta["metadata"]
 
             preds = preds.detach().cpu() if cfg.NUM_GPUS else preds.detach()
             ori_boxes = (
@@ -80,6 +78,11 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
             metadata = (
                 metadata.detach().cpu() if cfg.NUM_GPUS else metadata.detach()
             )
+
+            if cfg.NUM_GPUS > 1:
+                preds = torch.cat(du.all_gather_unaligned(preds), dim=0)
+                ori_boxes = torch.cat(du.all_gather_unaligned(ori_boxes), dim=0)
+                metadata = torch.cat(du.all_gather_unaligned(metadata), dim=0)
 
             test_meter.iter_toc()
             # Update and log stats.
@@ -98,6 +101,7 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
                 preds = preds.cpu()
                 labels = labels.cpu()
                 video_idx = video_idx.cpu()
+
             test_meter.iter_toc()
             # Update and log stats.
             test_meter.update_stats(
@@ -106,16 +110,26 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
             test_meter.log_iter_stats(cur_iter)
 
         test_meter.iter_tic()
+
     # Log epoch stats and print the final testing results.
-    if writer is not None and not cfg.DETECTION.ENABLE:
-        all_preds = [pred.clone().detach() for pred in test_meter.video_preds]
-        all_labels = [
-            label.clone().detach() for label in test_meter.video_labels
-        ]
+    if not cfg.DETECTION.ENABLE:
+        all_preds = test_meter.video_preds.clone().detach()
+        all_labels = test_meter.video_labels
         if cfg.NUM_GPUS:
-            all_preds = [pred.cpu() for pred in all_preds]
-            all_labels = [label.cpu() for label in all_labels]
-        writer.plot_eval(preds=all_preds, labels=all_labels)
+            all_preds = all_preds.cpu()
+            all_labels = all_labels.cpu()
+        if writer is not None:
+            writer.plot_eval(preds=all_preds, labels=all_labels)
+
+        if cfg.TEST.SAVE_RESULTS_PATH != "":
+            save_path = os.path.join(cfg.OUTPUT_DIR, cfg.TEST.SAVE_RESULTS_PATH)
+
+            with PathManager.open(save_path, "wb") as f:
+                pickle.dump([all_labels, all_labels], f)
+
+            logger.info(
+                "Successfully saved prediction results to {}".format(save_path)
+            )
 
     test_meter.finalize_metrics()
     test_meter.reset()

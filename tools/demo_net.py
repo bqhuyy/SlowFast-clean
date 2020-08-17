@@ -2,19 +2,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
 import numpy as np
-import cv2
+import time
 import torch
 import tqdm
 
 from slowfast.utils import logging
-from slowfast.visualization.demo_loader import VideoReader
-from slowfast.visualization.ava_demo_precomputed_boxes import AVAVisualizerWithPrecomputedBox
-from slowfast.visualization.predictor import (
-    ActionPredictor,
-    Detectron2Predictor,
-    draw_predictions,
+from slowfast.visualization.async_predictor import AsyncDemo, AsyncVis
+from slowfast.visualization.ava_demo_precomputed_boxes import (
+    AVAVisualizerWithPrecomputedBox,
 )
-from slowfast.visualization.utils import init_task_info
+from slowfast.visualization.demo_loader import ThreadVideoManager, VideoManager
+from slowfast.visualization.predictor import ActionPredictor
 from slowfast.visualization.video_visualizer import VideoVisualizer
 
 logger = logging.get_logger(__name__)
@@ -38,46 +36,61 @@ def run_demo(cfg, frame_provider):
     # Print config.
     logger.info("Run demo with config:")
     logger.info(cfg)
-    assert cfg.NUM_GPUS <= 1, "Cannot run demo on multiple GPUs."
-    # Print config.
-    logger.info("Run demo with config:")
-    logger.info(cfg)
-    video_vis = VideoVisualizer(
-        cfg.MODEL.NUM_CLASSES,
-        cfg.DEMO.LABEL_FILE_PATH,
-        cfg.TENSORBOARD.MODEL_VIS.TOPK_PREDS,
-        cfg.TENSORBOARD.MODEL_VIS.COLORMAP,
+    common_classes = (
+        cfg.DEMO.COMMON_CLASS_NAMES
+        if len(cfg.DEMO.LABEL_FILE_PATH) != 0
+        else None
     )
 
-    if cfg.DETECTION.ENABLE:
-        object_detector = Detectron2Predictor(cfg)
+    video_vis = VideoVisualizer(
+        num_classes=cfg.MODEL.NUM_CLASSES,
+        class_names_path=cfg.DEMO.LABEL_FILE_PATH,
+        top_k=cfg.TENSORBOARD.MODEL_VIS.TOPK_PREDS,
+        thres=cfg.DEMO.COMMON_CLASS_THRES,
+        lower_thres=cfg.DEMO.UNCOMMON_CLASS_THRES,
+        common_class_names=common_classes,
+        colormap=cfg.TENSORBOARD.MODEL_VIS.COLORMAP,
+        mode=cfg.DEMO.VIS_MODE,
+    )
 
-    model = ActionPredictor(cfg)
+    async_vis = AsyncVis(video_vis, n_workers=cfg.DEMO.NUM_VIS_INSTANCES)
+
+    if cfg.NUM_GPUS <= 1:
+        model = ActionPredictor(cfg=cfg, async_vis=async_vis)
+    else:
+        model = AsyncDemo(cfg=cfg, async_vis=async_vis)
 
     seq_len = cfg.DATA.NUM_FRAMES * cfg.DATA.SAMPLING_RATE
+
     assert (
         cfg.DEMO.BUFFER_SIZE <= seq_len // 2
     ), "Buffer size cannot be greater than half of sequence length."
-    init_task_info(
-        frame_provider.display_height,
-        frame_provider.display_width,
-        cfg.DATA.TEST_CROP_SIZE,
-        cfg.DEMO.CLIP_VIS_SIZE,
-    )
+    num_task = 0
+    # Start reading frames.
+    frame_provider.start()
     for able_to_read, task in frame_provider:
         if not able_to_read:
             break
+        if task is None:
+            time.sleep(0.02)
+            continue
+        num_task += 1
 
-        if cfg.DETECTION.ENABLE:
-            task = object_detector(task)
+        model.put(task)
+        try:
+            task = model.get()
+            num_task -= 1
+            yield task
+        except IndexError:
+            continue
 
-        task = model(task)
-        frames = draw_predictions(task, video_vis)
-        # hit Esc to quit the demo.
-        key = cv2.waitKey(1)
-        if key == 27:
-            break
-        yield frames
+    while num_task != 0:
+        try:
+            task = model.get()
+            num_task -= 1
+            yield task
+        except IndexError:
+            continue
 
 
 def demo(cfg):
@@ -92,10 +105,15 @@ def demo(cfg):
         precomputed_box_vis = AVAVisualizerWithPrecomputedBox(cfg)
         precomputed_box_vis()
     else:
-        frame_provider = VideoReader(cfg)
+        start = time.time()
+        if cfg.DEMO.THREAD_ENABLE:
+            frame_provider = ThreadVideoManager(cfg)
+        else:
+            frame_provider = VideoManager(cfg)
 
-        for frames in tqdm.tqdm(run_demo(cfg, frame_provider)):
-            for frame in frames:
-                frame_provider.display(frame)
+        for task in tqdm.tqdm(run_demo(cfg, frame_provider)):
+            frame_provider.display(task)
 
+        frame_provider.join()
         frame_provider.clean()
+        logger.info("Finish demo in: {}".format(time.time() - start))

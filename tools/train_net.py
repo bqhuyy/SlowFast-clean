@@ -201,15 +201,16 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
             preds = model(inputs, meta["boxes"])
             ori_boxes = meta["ori_boxes"]
             metadata = meta["metadata"]
-            if cfg.NUM_GPUS > 1:
-                preds = torch.cat(du.all_gather_unaligned(preds), dim=0)
-                ori_boxes = torch.cat(du.all_gather_unaligned(ori_boxes), dim=0)
-                metadata = torch.cat(du.all_gather_unaligned(metadata), dim=0)
 
             if cfg.NUM_GPUS:
                 preds = preds.cpu()
                 ori_boxes = ori_boxes.cpu()
                 metadata = metadata.cpu()
+
+            if cfg.NUM_GPUS > 1:
+                preds = torch.cat(du.all_gather_unaligned(preds), dim=0)
+                ori_boxes = torch.cat(du.all_gather_unaligned(ori_boxes), dim=0)
+                metadata = torch.cat(du.all_gather_unaligned(metadata), dim=0)
 
             val_meter.iter_toc()
             # Update and log stats.
@@ -267,7 +268,9 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
             )
         else:
             all_preds = [pred.clone().detach() for pred in val_meter.all_preds]
-            all_labels = [label.clone().detach() for label in val_meter.all_labels]
+            all_labels = [
+                label.clone().detach() for label in val_meter.all_labels
+            ]
             if cfg.NUM_GPUS:
                 all_preds = [pred.cpu() for pred in all_preds]
                 all_labels = [label.cpu() for label in all_labels]

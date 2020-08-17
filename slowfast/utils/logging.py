@@ -37,6 +37,15 @@ def setup_logging(output_dir=None):
     master process, and suppress logging for the non-master processes.
     """
     # Set up logging format.
+    _FORMAT = "[%(levelname)s: %(filename)s: %(lineno)4d]: %(message)s"
+
+    if du.is_master_proc():
+        # Enable logging for the master process.
+        logging.root.handlers = []
+    else:
+        # Suppress logging for non-master processes.
+        _suppress_print()
+
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
@@ -50,9 +59,6 @@ def setup_logging(output_dir=None):
         ch.setLevel(logging.DEBUG)
         ch.setFormatter(plain_formatter)
         logger.addHandler(ch)
-    else:
-        # Suppress logging for non-master processes.
-        _suppress_print()
 
     if output_dir is not None and du.is_master_proc(du.get_world_size()):
         filename = os.path.join(output_dir, "stdout.log")
