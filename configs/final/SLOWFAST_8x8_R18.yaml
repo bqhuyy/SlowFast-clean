@@ -62,10 +62,9 @@ TENSORBOARD:
   CLASS_NAMES_PATH: 'filenames/kinetics-40/class_id.json'
   CATEGORIES_PATH: 'filenames/kinetics-40/parents.json'
   CONFUSION_MATRIX:
-    ENABLE: False
-    SUBSET_PATH: 'filenames/kinetics-40/subset.txt'
+    ENABLE: True
   HISTOGRAM:
-    ENABLE: False
+    ENABLE: True
     TOPK: 10
 NUM_GPUS: 3
 NUM_SHARDS: 1
