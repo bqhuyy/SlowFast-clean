@@ -58,7 +58,15 @@ DATA_LOADER:
   NUM_WORKERS: 4
   PIN_MEMORY: True
 TENSORBOARD:
-  OUTPUT: SLOWFAST_8x8_R18
+  ENABLE: False
+  CLASS_NAMES_PATH: 'filenames/small-kinetics/class_id.json'
+  CATEGORIES_PATH: 'filenames/small-kinetics/parents.json'
+  CONFUSION_MATRIX:
+    ENABLE: True
+    SUBSET_PATH: 'filenames/small-kinetics/class_id.json'
+  HISTOGRAM:
+    ENABLE: True
+    TOP_K: 10
 NUM_GPUS: 4
 NUM_SHARDS: 1
 RNG_SEED: 0
