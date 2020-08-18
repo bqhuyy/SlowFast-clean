@@ -63,7 +63,7 @@ TENSORBOARD:
   CATEGORIES_PATH: 'filenames/kinetics-40/parents.json'
   CONFUSION_MATRIX:
     ENABLE: True
-    SUBSET_PATH: 'filenames/kinetics-40/class_id.json'
+    SUBSET_PATH: 'filenames/kinetics-40/subset.txt'
   HISTOGRAM:
     ENABLE: True
     TOPK: 10
