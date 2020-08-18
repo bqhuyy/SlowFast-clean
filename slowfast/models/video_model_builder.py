@@ -13,7 +13,7 @@ from . import head_helper, resnet_helper, stem_helper
 from .build import MODEL_REGISTRY
 
 # Number of blocks for different stages given the model depth.
-_MODEL_STAGE_DEPTH = {50: (3, 4, 6, 3), 101: (3, 4, 23, 3)}
+_MODEL_STAGE_DEPTH = {50: (3, 4, 6, 3), 101: (3, 4, 23, 3), 18: (2, 2, 2, 2)}
 
 # Basis of temporal kernel sizes for each of the stage.
 _TEMPORAL_KERNEL_BASIS = {
@@ -68,6 +68,11 @@ _POOL1 = {
     "i3d_nopool": [[1, 1, 1]],
     "slow": [[1, 1, 1]],
     "slowfast": [[1, 1, 1], [1, 1, 1]],
+}
+
+_RES_BLOCK_DIM_OUT = {
+    "bottleneck_transform": (4, 8, 16, 32), 
+    "basic_transform": (1, 2, 4, 8),
 }
 
 
@@ -179,6 +184,8 @@ class SlowFast(nn.Module):
         out_dim_ratio = (
             cfg.SLOWFAST.BETA_INV // cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO
         )
+        
+        (dim_out2, dim_out3, dim_out4, dim_out5) = _RES_BLOCK_DIM_OUT[cfg.RESNET.TRANS_FUNC]
 
         temp_kernel = _TEMPORAL_KERNEL_BASIS[cfg.MODEL.ARCH]
 
@@ -207,8 +214,8 @@ class SlowFast(nn.Module):
                 width_per_group // cfg.SLOWFAST.BETA_INV,
             ],
             dim_out=[
-                width_per_group * 4,
-                width_per_group * 4 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out2,
+                width_per_group * dim_out2 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_inner=[dim_inner, dim_inner // cfg.SLOWFAST.BETA_INV],
             temp_kernel_sizes=temp_kernel[1],
@@ -225,7 +232,7 @@ class SlowFast(nn.Module):
             norm_module=self.norm_module,
         )
         self.s2_fuse = FuseFastToSlow(
-            width_per_group * 4 // cfg.SLOWFAST.BETA_INV,
+            width_per_group * dim_out2 // cfg.SLOWFAST.BETA_INV,
             cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
             cfg.SLOWFAST.FUSION_KERNEL_SZ,
             cfg.SLOWFAST.ALPHA,
@@ -242,12 +249,12 @@ class SlowFast(nn.Module):
 
         self.s3 = resnet_helper.ResStage(
             dim_in=[
-                width_per_group * 4 + width_per_group * 4 // out_dim_ratio,
-                width_per_group * 4 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out2 + width_per_group * dim_out2 // out_dim_ratio,
+                width_per_group * dim_out2 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_out=[
-                width_per_group * 8,
-                width_per_group * 8 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out3,
+                width_per_group * dim_out3 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_inner=[dim_inner * 2, dim_inner * 2 // cfg.SLOWFAST.BETA_INV],
             temp_kernel_sizes=temp_kernel[2],
@@ -264,7 +271,7 @@ class SlowFast(nn.Module):
             norm_module=self.norm_module,
         )
         self.s3_fuse = FuseFastToSlow(
-            width_per_group * 8 // cfg.SLOWFAST.BETA_INV,
+            width_per_group * dim_out3 // cfg.SLOWFAST.BETA_INV,
             cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
             cfg.SLOWFAST.FUSION_KERNEL_SZ,
             cfg.SLOWFAST.ALPHA,
@@ -273,12 +280,12 @@ class SlowFast(nn.Module):
 
         self.s4 = resnet_helper.ResStage(
             dim_in=[
-                width_per_group * 8 + width_per_group * 8 // out_dim_ratio,
-                width_per_group * 8 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out3 + width_per_group * dim_out3 // out_dim_ratio,
+                width_per_group * dim_out3 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_out=[
-                width_per_group * 16,
-                width_per_group * 16 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out4,
+                width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_inner=[dim_inner * 4, dim_inner * 4 // cfg.SLOWFAST.BETA_INV],
             temp_kernel_sizes=temp_kernel[3],
@@ -295,7 +302,7 @@ class SlowFast(nn.Module):
             norm_module=self.norm_module,
         )
         self.s4_fuse = FuseFastToSlow(
-            width_per_group * 16 // cfg.SLOWFAST.BETA_INV,
+            width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
             cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
             cfg.SLOWFAST.FUSION_KERNEL_SZ,
             cfg.SLOWFAST.ALPHA,
@@ -304,12 +311,12 @@ class SlowFast(nn.Module):
 
         self.s5 = resnet_helper.ResStage(
             dim_in=[
-                width_per_group * 16 + width_per_group * 16 // out_dim_ratio,
-                width_per_group * 16 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out4 + width_per_group * dim_out4 // out_dim_ratio,
+                width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_out=[
-                width_per_group * 32,
-                width_per_group * 32 // cfg.SLOWFAST.BETA_INV,
+                width_per_group * dim_out5,
+                width_per_group * dim_out5 // cfg.SLOWFAST.BETA_INV,
             ],
             dim_inner=[dim_inner * 8, dim_inner * 8 // cfg.SLOWFAST.BETA_INV],
             temp_kernel_sizes=temp_kernel[4],
@@ -329,8 +336,8 @@ class SlowFast(nn.Module):
         if cfg.DETECTION.ENABLE:
             self.head = head_helper.ResNetRoIHead(
                 dim_in=[
-                    width_per_group * 32,
-                    width_per_group * 32 // cfg.SLOWFAST.BETA_INV,
+                    width_per_group * dim_out5,
+                    width_per_group * dim_out5 // cfg.SLOWFAST.BETA_INV,
                 ],
                 num_classes=cfg.MODEL.NUM_CLASSES,
                 pool_size=[
@@ -352,8 +359,8 @@ class SlowFast(nn.Module):
         else:
             self.head = head_helper.ResNetBasicHead(
                 dim_in=[
-                    width_per_group * 32,
-                    width_per_group * 32 // cfg.SLOWFAST.BETA_INV,
+                    width_per_group * dim_out5,
+                    width_per_group * dim_out5 // cfg.SLOWFAST.BETA_INV,
                 ],
                 num_classes=cfg.MODEL.NUM_CLASSES,
                 pool_size=[None, None]
