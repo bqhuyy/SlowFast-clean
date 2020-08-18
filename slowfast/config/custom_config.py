@@ -3,7 +3,29 @@
 
 """Add custom configs and default values"""
 
+from fvcore.common.config import CfgNode
 
 def add_custom_config(_C):
-    # Add your own customized configs.
-    pass
+    # Knowledge distillation
+    _C.KD = CfgNode()
+
+    # If True enable KD, else skip KD.
+    _C.KD.ENABLE = False
+
+    # Teacher's config
+    _C.KD.CONFIG = ""
+
+    # Alpha
+    _C.KD.ALPHA = 0.95
+
+    # Temperature
+    _C.KD.TEMPERATURE = 6
+
+    # Teacher's config
+    _C.KD.CONFIG = "configs/Kinetics/SLOWFAST_8x8_R50.yaml"
+    
+    # Path to the checkpoint to load the initial weight.
+    _C.KD.CHECKPOINT_FILE_PATH = ""
+
+    # Checkpoint types include `caffe2` or `pytorch`.
+    _C.KD.CHECKPOINT_TYPE = "pytorch"

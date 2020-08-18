@@ -8,6 +8,7 @@ from slowfast.utils.parser import load_config, parse_args
 from demo_net import demo
 from test_net import test
 from train_net import train
+from train_KD import train as train_KD
 from visualization import visualize
 
 
@@ -20,7 +21,10 @@ def main():
 
     # Perform training.
     if cfg.TRAIN.ENABLE:
-        launch_job(cfg=cfg, init_method=args.init_method, func=train)
+        if cfg.KD.ENABLE:
+            launch_job(cfg=cfg, init_method=args.init_method, func=train_KD)
+        else:
+            launch_job(cfg=cfg, init_method=args.init_method, func=train)
 
     # Perform multi-clip testing.
     if cfg.TEST.ENABLE:

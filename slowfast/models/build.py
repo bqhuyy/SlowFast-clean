@@ -5,6 +5,7 @@
 
 import torch
 from fvcore.common.registry import Registry
+from slowfast.config.defaults import get_cfg
 
 MODEL_REGISTRY = Registry("MODEL")
 MODEL_REGISTRY.__doc__ = """
@@ -36,6 +37,37 @@ def build_model(cfg, gpu_id=None):
     name = cfg.MODEL.MODEL_NAME
     model = MODEL_REGISTRY.get(name)(cfg)
 
+    if cfg.NUM_GPUS:
+        if gpu_id is None:
+            # Determine the GPU used by the current process
+            cur_device = torch.cuda.current_device()
+        else:
+            cur_device = gpu_id
+        # Transfer the model to the current GPU device
+        model = model.cuda(device=cur_device)
+    # Use multi-process data parallel model in the multi-gpu setting
+    if cfg.NUM_GPUS > 1:
+        # Make model replica operate on the current device
+        model = torch.nn.parallel.DistributedDataParallel(
+            module=model, device_ids=[cur_device], output_device=cur_device
+        )
+    return model
+
+
+def build_teacher_model(cfg, gpu_id=None):
+    """
+    Builds the video model.
+    Args:
+        cfg (configs): configs that contains the hyper-parameters to build the
+        backbone. Details can be seen in slowfast/config/defaults.py.
+    """
+    # Load teacher cfg
+    teacher_cfg = get_cfg()
+    teacher_cfg.merge_from_file(cfg.KD.CONFIG)
+    teacher_cfg.KD.ENABLE = True
+    # Construct the model
+
+    model = MODEL_REGISTRY.get("Teacher_SlowFast")(teacher_cfg)
     if cfg.NUM_GPUS:
         if gpu_id is None:
             # Determine the GPU used by the current process
