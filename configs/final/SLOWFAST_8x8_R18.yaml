@@ -59,11 +59,11 @@ DATA_LOADER:
   PIN_MEMORY: True
 TENSORBOARD:
   ENABLE: False
-  CLASS_NAMES_PATH: 'filenames/small-kinetics/class_id.json'
-  CATEGORIES_PATH: 'filenames/small-kinetics/parents.json'
+  CLASS_NAMES_PATH: 'filenames/kinetics-40/class_id.json'
+  CATEGORIES_PATH: 'filenames/kinetics-40/parents.json'
   CONFUSION_MATRIX:
     ENABLE: True
-    SUBSET_PATH: 'filenames/small-kinetics/class_id.json'
+    SUBSET_PATH: 'filenames/kinetics-40/class_id.json'
   HISTOGRAM:
     ENABLE: True
     TOPK: 10
