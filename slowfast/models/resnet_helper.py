@@ -39,6 +39,7 @@ class BasicTransform(nn.Module):
         inplace_relu=True,
         eps=1e-5,
         bn_mmt=0.1,
+        dilation=1,
         norm_module=nn.BatchNorm3d,
     ):
         """
