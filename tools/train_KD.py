@@ -79,23 +79,32 @@ def train_epoch(
             with torch.no_grad():
                 teacher_preds, teacher_features = teacher_model(inputs)
         # Explicitly declare reduction to mean.
-        loss_kl = losses.loss_fn_kd(student_preds, labels, teacher_preds, cfg)
-        loss_kd = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)()
+        # L2 loss for featuremap difference
+        loss_mse_func = losses.get_loss_func('mse')(reduction="mean")
+        # Cross entropy loss for prediction
+        loss_pred_func = losses.get_loss_func('cross_entropy')(reduction="mean")
+        # kl-divergence loss
+        loss_kl_func = losses.get_loss_func('kl_divergence')(reduction="batchmean")
         
-        loss_slow = []
-        loss_fast = []
-        for (s, t) in zip(student_features, teacher_features):
-            if cfg.MODEL.LOSS_FUNC == 'cosine_similarity':
-                loss_slow.append(torch.mean(1.0 - loss_kd(torch.flatten(s[0], 1), torch.flatten(t[0], 1))))
-                loss_fast.append(torch.mean(1.0 - loss_kd(torch.flatten(s[1], 1), torch.flatten(t[1], 1))))
-            elif cfg.MODEL.LOSS_FUNC == 'mse':
-                loss_slow.append(loss_kd(torch.flatten(s[0], 1), torch.flatten(t[0], 1)))
-                loss_fast.append(loss_kd(torch.flatten(s[1], 1), torch.flatten(t[1], 1)))
+        T = cfg.KD.TEMPERATURE
+        alpha = cfg.KD.ALPHA
         
-        loss_slow = torch.stack(loss_slow)
-        loss_fast = torch.stack(loss_fast)
-        # Compute the loss.
-        loss = loss_kl + torch.sum(loss_slow) + torch.sum(loss_fast)
+        loss_pred = loss_pred_func(student_preds, labels) * (1. - alpha)
+        loss_mse = []
+        loss_kl = []
+        for s_features, t_features in zip(student_features, teacher_features):
+            for i in range(2):
+                #mse loss
+                loss_mse.append(loss_mse_func(s_features[i], t_features[i]))
+
+                #kl divergence loss 
+                b, c, t, h, w = s_features[i].shape
+                s_feature = s_features[i].permute(0, 2, 3, 4, 1).contiguous().view(b*t*h*w, c)
+                t_feature = t_features[i].permute(0, 2, 3, 4, 1).contiguous().view(b*t*h*w, c)
+                loss_kl.append(loss_kl_func(F.log_softmax(s_feature/T, dim = 0), F.softmax(t_feature/T, dim = 0)) * (alpha * T * T))
+            
+        #TOTAL LOSS = sum of all losses
+        loss = loss_pred + sum(loss_mse) + sum(loss_kl)
 
         # check Nan Loss.
         misc.check_nan_losses(loss)
