@@ -12,6 +12,7 @@ _LOSSES = {
     "bce_logit": nn.BCEWithLogitsLoss,
     "mse": nn.MSELoss,
     "cosine_similarity": nn.CosineSimilarity,
+    "kl_divergence": nn.KLDivLoss,
 }
 
 

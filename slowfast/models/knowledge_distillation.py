@@ -177,10 +177,12 @@ class PWConv(nn.Module):
         super(PWConv, self).__init__()
         self.pwconv = nn.Conv3d(dim_in, dim_out, kernel_size=1, stride=1, padding=0, bias=False)
         self.bn = nn.BatchNorm3d(dim_out)
+        self.relu = nn.ReLU(True)
 
     def forward(self, x):
         x = self.pwconv(x)
         x = self.bn(x)
+        x = self.relu(x)
         return x
 
 
@@ -759,30 +761,30 @@ class Student_SlowFast(nn.Module):
         x = self.s1(x)
         x = self.s1_fuse(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-            kd = self.s1_kd(x)
-            feature1 = [F.normalize(kd[0], dim=0), F.normalize(kd[1], dim=0)]
+            kd1 = self.s1_kd(x)
+            feature1 = [F.normalize(kd1[0], dim=0), F.normalize(kd1[1], dim=0)]
         x = self.s2(x)
         x = self.s2_fuse(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-            kd = self.s2_kd(x)
-            feature2 = [F.normalize(kd[0], dim=0), F.normalize(kd[1], dim=0)]
+            kd2 = self.s2_kd(x)
+            feature2 = [F.normalize(kd2[0], dim=0), F.normalize(kd2[1], dim=0)]
         for pathway in range(self.num_pathways):
             pool = getattr(self, "pathway{}_pool".format(pathway))
             x[pathway] = pool(x[pathway])
         x = self.s3(x)
         x = self.s3_fuse(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-            kd = self.s3_kd(x)
-            feature3 = [F.normalize(kd[0], dim=0), F.normalize(kd[1], dim=0)]
+            kd3 = self.s3_kd(x)
+            feature3 = [F.normalize(kd3[0], dim=0), F.normalize(kd3[1], dim=0)]
         x = self.s4(x)
         x = self.s4_fuse(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-            kd = self.s4_kd(x)
-            feature4 = [F.normalize(kd[0], dim=0), F.normalize(kd[1], dim=0)]
+            kd4 = self.s4_kd(x)
+            feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
         x = self.s5(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-            kd = self.s5_kd(x)
-            feature5 = [F.normalize(kd[0], dim=0), F.normalize(kd[1], dim=0)]
+            kd5 = self.s5_kd(x)
+            feature5 = [F.normalize(kd5[0], dim=0), F.normalize(kd5[1], dim=0)]
         if self.enable_detection:
             x = self.head(x, bboxes)
         else:
