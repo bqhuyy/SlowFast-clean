@@ -80,18 +80,22 @@ def train_epoch(
                 teacher_preds, teacher_features = teacher_model(inputs)
         # Explicitly declare reduction to mean.
         loss_kl = losses.loss_fn_kd(student_preds, labels, teacher_preds, cfg)
-        loss_cos = losses.get_loss_func('cosine_similarity')()
+        loss_kd = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)()
         
         loss_slow = []
         loss_fast = []
         for (s, t) in zip(student_features, teacher_features):
-            loss_slow.append(torch.mean(1.0 - loss_cos(s[0], t[0])))
-            loss_fast.append(torch.mean(1.0 - loss_cos(s[1], t[1])))
+            if cfg.MODEL.LOSS_FUNC == 'cosine_similarity':
+                loss_slow.append(torch.mean(1.0 - loss_kd(torch.flatten(s[0], 1), torch.flatten(t[0], 1))))
+                loss_fast.append(torch.mean(1.0 - loss_kd(torch.flatten(s[1], 1), torch.flatten(t[1], 1))))
+            elif cfg.MODEL.LOSS_FUNC == 'mse':
+                loss_slow.append(loss_kd(torch.flatten(s[0], 1), torch.flatten(t[0], 1)))
+                loss_fast.append(loss_kd(torch.flatten(s[1], 1), torch.flatten(t[1], 1)))
         
         loss_slow = torch.stack(loss_slow)
         loss_fast = torch.stack(loss_fast)
         # Compute the loss.
-        loss = loss_kl + torch.mean(loss_slow) + torch.mean(loss_fast)
+        loss = loss_kl + torch.sum(loss_slow) + torch.sum(loss_fast)
 
         # check Nan Loss.
         misc.check_nan_losses(loss)
@@ -113,7 +117,7 @@ def train_epoch(
             # write to tensorboard format if available.
             if writer is not None:
                 writer.add_scalars(
-                    {"Train/loss": loss, "Train/lr": lr},
+                    {"Train/loss": loss, "Train/lr": lr, "Features/loss": torch.sum(loss_slow) + torch.sum(loss_fast)},
                     global_step=data_size * cur_epoch + cur_iter,
                 )
 
@@ -164,6 +168,7 @@ def train_epoch(
                         "Train/lr": lr,
                         "Train/Top1_err": top1_err,
                         "Train/Top5_err": top5_err,
+                        "Train/feature_loss": torch.sum(loss_slow) + torch.sum(loss_fast),
                     },
                     global_step=data_size * cur_epoch + cur_iter,
                 )

@@ -48,7 +48,7 @@ MODEL:
   NUM_CLASSES: 40
   ARCH: slowfast
   MODEL_NAME: Student_SlowFast
-  LOSS_FUNC: cross_entropy
+  LOSS_FUNC: mse
   DROPOUT_RATE: 0.5
 TEST:
   ENABLE: True
