@@ -126,7 +126,7 @@ def train_epoch(
             # write to tensorboard format if available.
             if writer is not None:
                 writer.add_scalars(
-                    {"Train/loss": loss, "Train/lr": lr, "Features/loss": torch.sum(loss_slow) + torch.sum(loss_fast)},
+                    {"Train/loss": loss, "Train/lr": lr, "Train/mse": sum(loss_mse), "Train/loss_kl": sum(loss_kl), "Train/loss_pred": loss_pred},
                     global_step=data_size * cur_epoch + cur_iter,
                 )
 
@@ -177,7 +177,9 @@ def train_epoch(
                         "Train/lr": lr,
                         "Train/Top1_err": top1_err,
                         "Train/Top5_err": top5_err,
-                        "Train/feature_loss": torch.sum(loss_slow) + torch.sum(loss_fast),
+                        "Train/mse": sum(loss_mse),
+                        "Train/loss_kl": sum(loss_kl),
+                        "Train/loss_pred": loss_pred,
                     },
                     global_step=data_size * cur_epoch + cur_iter,
                 )
