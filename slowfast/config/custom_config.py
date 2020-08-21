@@ -29,3 +29,12 @@ def add_custom_config(_C):
 
     # Checkpoint types include `caffe2` or `pytorch`.
     _C.KD.CHECKPOINT_TYPE = "pytorch"
+    
+    # TSM
+    _C.TSM = CfgNode()
+
+    # n_div for TSM
+    _C.TSM.N_DIV = [[8, 8], [8, 8], [8, 8], [8, 8]]
+
+    # fusion n_div
+    _C.TSM.FUSION_N_DIV = [8, 8, 8, 8]
