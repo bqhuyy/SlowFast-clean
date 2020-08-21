@@ -1,7 +1,7 @@
 TRAIN:
   ENABLE: True
   DATASET: kinetics
-  BATCH_SIZE: 32
+  BATCH_SIZE: 64
   EVAL_PERIOD: 5
   CHECKPOINT_PERIOD: 5
   AUTO_RESUME: True
@@ -46,12 +46,19 @@ MODEL:
 TEST:
   ENABLE: True
   DATASET: kinetics
-  BATCH_SIZE: 32
+  BATCH_SIZE: 64
 DATA_LOADER:
   NUM_WORKERS: 4
   PIN_MEMORY: True
 TENSORBOARD:
   ENABLE: False
+  CLASS_NAMES_PATH: 'filenames/kinetics-40/class_id.json'
+  CATEGORIES_PATH: 'filenames/kinetics-40/parents.json'
+  CONFUSION_MATRIX:
+    ENABLE: True
+  HISTOGRAM:
+    ENABLE: True
+    TOPK: 10
 NUM_GPUS: 4
 NUM_SHARDS: 1
 RNG_SEED: 0
