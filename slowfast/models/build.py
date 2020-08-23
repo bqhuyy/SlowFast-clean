@@ -67,7 +67,7 @@ def build_teacher_model(cfg, gpu_id=None):
     teacher_cfg.KD.ENABLE = True
     # Construct the model
 
-    model = MODEL_REGISTRY.get("Teacher_SlowFast")(teacher_cfg)
+    model = MODEL_REGISTRY.get(teacher_cfg.MODEL.MODEL_NAME)(teacher_cfg)
     if cfg.NUM_GPUS:
         if gpu_id is None:
             # Determine the GPU used by the current process

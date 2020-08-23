@@ -69,6 +69,6 @@ RNG_SEED: 0
 OUTPUT_DIR: 'Student_SlowFast_MobileNetV3'
 KD:
   ENABLE: True
-  CONFIG: 'configs/final/TEACHER_SLOWFAST_NLN_8x8_R50.yaml'
+  CONFIG: 'configs/final/TEACHER_SLOWFAST_NLN_8x8_MOBILENETV3.yaml'
   ALPHA: 0.5
   TEMPERATURE: 7
