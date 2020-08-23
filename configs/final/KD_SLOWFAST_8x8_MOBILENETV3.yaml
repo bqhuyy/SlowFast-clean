@@ -42,7 +42,8 @@ SOLVER:
 MODEL:
   NUM_CLASSES: 40
   ARCH: slowfast
-  MODEL_NAME: KD_SlowFast_MobileNetV3
+  MODEL_NAME: Student_SlowFast_MobileNetV3
+  LOSS_FUNC: mse
   DROPOUT_RATE: 0.5
 TEST:
   ENABLE: True
@@ -50,15 +51,24 @@ TEST:
   BATCH_SIZE: 64
 TENSORBOARD:
   ENABLE: False
+DATA_LOADER:
+  NUM_WORKERS: 4
+  PIN_MEMORY: True
+TENSORBOARD:
+  ENABLE: False
+  CLASS_NAMES_PATH: 'filenames/kinetics-40/class_id.json'
+  CATEGORIES_PATH: 'filenames/kinetics-40/parents.json'
+  CONFUSION_MATRIX:
+    ENABLE: True
+  HISTOGRAM:
+    ENABLE: True
+    TOPK: 10
+NUM_GPUS: 4
+NUM_SHARDS: 1
+RNG_SEED: 0
+OUTPUT_DIR: 'Student_SlowFast_MobileNetV3'
 KD:
   ENABLE: True
   CONFIG: 'configs/final/TEACHER_SLOWFAST_NLN_8x8_R50.yaml'
   ALPHA: 0.5
   TEMPERATURE: 7
-DATA_LOADER:
-  NUM_WORKERS: 4
-  PIN_MEMORY: True
-NUM_GPUS: 4
-NUM_SHARDS: 1
-RNG_SEED: 0
-OUTPUT_DIR: 'KD_SLOWFAST_8x8_MOBILENETV3'
