@@ -778,7 +778,7 @@ class Student_SlowFast(nn.Module):
 #             kd3 = self.s3_kd(x)
 #             feature3 = [F.normalize(kd3[0], dim=0), F.normalize(kd3[1], dim=0)]
         x = self.s4(x)
-#         x = self.s4_fuse(x)
+        x = self.s4_fuse(x)
 #         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
 #             kd4 = self.s4_kd(x)
 #             feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
