@@ -18,6 +18,8 @@ from slowfast.datasets import loader
 from slowfast.models import build_model
 from slowfast.utils.meters import AVAMeter, TestMeter
 
+import torchfunc
+
 logger = logging.get_logger(__name__)
 
 
@@ -45,6 +47,7 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
     # Enable eval mode.
     model.eval()
     test_meter.iter_tic()
+    inference_time = 0
 
     for cur_iter, (inputs, labels, video_idx, meta) in enumerate(test_loader):
         if cfg.NUM_GPUS:
@@ -67,7 +70,9 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
 
         if cfg.DETECTION.ENABLE:
             # Compute the predictions.
-            preds = model(inputs, meta["boxes"])
+            with torchfunc.Timer() as timer:
+                preds = model(inputs, meta["boxes"])
+                inference_time += timer.checkpoint()
             ori_boxes = meta["ori_boxes"]
             metadata = meta["metadata"]
 
@@ -90,8 +95,9 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
             test_meter.log_iter_stats(None, cur_iter)
         else:
             # Perform the forward pass.
-            preds = model(inputs)
-
+            with torchfunc.Timer() as timer:
+                preds = model(inputs)
+                inference_time += timer.checkpoint()
             # Gather all the predictions across all the devices to perform ensemble.
             if cfg.NUM_GPUS > 1:
                 preds, labels, video_idx = du.all_gather(
@@ -133,6 +139,8 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
 
     test_meter.finalize_metrics()
     test_meter.reset()
+    
+    logger.info('=> Mean inference time for %d video clips: %.3fs' % (len(test_loader), inference_time / len(test_loader)))
 
 
 def test(cfg):

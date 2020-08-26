@@ -5,6 +5,8 @@
 import numpy as np
 import pprint
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from fvcore.nn.precise_bn import get_bn_modules, update_bn_stats
 
 import slowfast.models.losses as losses
@@ -16,7 +18,7 @@ import slowfast.utils.metrics as metrics
 import slowfast.utils.misc as misc
 import slowfast.visualization.tensorboard_vis as tb
 from slowfast.datasets import loader
-from slowfast.models import build_model
+from slowfast.models.build import build_model, build_teacher_model
 from slowfast.utils.meters import AVAMeter, TrainMeter, ValMeter
 from slowfast.utils.multigrid import MultigridSchedule
 
@@ -24,7 +26,7 @@ logger = logging.get_logger(__name__)
 
 
 def train_epoch(
-    train_loader, model, optimizer, train_meter, cur_epoch, cfg, writer=None
+    train_loader, student_model, teacher_model, optimizer, train_meter, cur_epoch, cfg, writer=None
 ):
     """
     Perform the video training for one epoch.
@@ -41,7 +43,8 @@ def train_epoch(
             to writer Tensorboard log.
     """
     # Enable train mode.
-    model.train()
+    teacher_model.eval()
+    student_model.train()
     train_meter.iter_tic()
     data_size = len(train_loader)
 
@@ -67,16 +70,41 @@ def train_epoch(
 
         if cfg.DETECTION.ENABLE:
             # Compute the predictions.
-            preds = model(inputs, meta["boxes"])
-
+            student_preds, student_features = student_model(inputs, meta["boxes"])
+            with torch.no_grad():
+                teacher_preds, teacher_features = teacher_model(inputs, meta["boxes"])
         else:
             # Perform the forward pass.
-            preds = model(inputs)
+            student_preds, student_features = student_model(inputs)
+            with torch.no_grad():
+                teacher_preds, teacher_features = teacher_model(inputs)
         # Explicitly declare reduction to mean.
-        loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
+        # L2 loss for featuremap difference
+        loss_mse_func = losses.get_loss_func('mse')(reduction="mean")
+        # Cross entropy loss for prediction
+        loss_pred_func = losses.get_loss_func('cross_entropy')(reduction="mean")
+        # kl-divergence loss
+        loss_kl_func = losses.get_loss_func('kl_divergence')(reduction="batchmean")
+        
+        T = cfg.KD.TEMPERATURE
+        alpha = cfg.KD.ALPHA
+        
+        loss_pred = loss_pred_func(student_preds, labels) * (1. - alpha)
+        loss_mse = []
+        loss_kl = []
+        for s_features, t_features in zip(student_features, teacher_features):
+            for i in range(2):
+                #mse loss
+                loss_mse.append(loss_mse_func(s_features[i], t_features[i]))
 
-        # Compute the loss.
-        loss = loss_fun(preds, labels)
+                #kl divergence loss 
+                b, c, t, h, w = s_features[i].shape
+                s_feature = s_features[i].permute(0, 2, 3, 4, 1).contiguous().view(b*t*h*w, c)
+                t_feature = t_features[i].permute(0, 2, 3, 4, 1).contiguous().view(b*t*h*w, c)
+                loss_kl.append(loss_kl_func(F.log_softmax(s_feature/T, dim = 0), F.softmax(t_feature/T, dim = 0)) * (alpha * T * T))
+            
+        #TOTAL LOSS = sum of all losses
+        loss = loss_pred + sum(loss_mse) + sum(loss_kl)
 
         # check Nan Loss.
         misc.check_nan_losses(loss)
@@ -98,7 +126,7 @@ def train_epoch(
             # write to tensorboard format if available.
             if writer is not None:
                 writer.add_scalars(
-                    {"Train/loss": loss, "Train/lr": lr},
+                    {"Train/loss": loss, "Train/lr": lr, "Train/mse": sum(loss_mse), "Train/loss_kl": sum(loss_kl), "Train/loss_pred": loss_pred},
                     global_step=data_size * cur_epoch + cur_iter,
                 )
 
@@ -111,9 +139,9 @@ def train_epoch(
                 loss = loss.item()
             else:
                 # Compute the errors.
-                num_topks_correct = metrics.topks_correct(preds, labels, (1, 5))
+                num_topks_correct = metrics.topks_correct(student_preds, labels, (1, 5))
                 top1_err, top5_err = [
-                    (1.0 - x / preds.size(0)) * 100.0 for x in num_topks_correct
+                    (1.0 - x / student_preds.size(0)) * 100.0 for x in num_topks_correct
                 ]
 
                 # Gather all the predictions across all the devices.
@@ -149,6 +177,9 @@ def train_epoch(
                         "Train/lr": lr,
                         "Train/Top1_err": top1_err,
                         "Train/Top5_err": top5_err,
+                        "Train/mse": sum(loss_mse),
+                        "Train/loss_kl": sum(loss_kl),
+                        "Train/loss_pred": loss_pred,
                     },
                     global_step=data_size * cur_epoch + cur_iter,
                 )
@@ -198,7 +229,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
 
         if cfg.DETECTION.ENABLE:
             # Compute the predictions.
-            preds = model(inputs, meta["boxes"])
+            preds, _ = model(inputs, meta["boxes"])
             ori_boxes = meta["ori_boxes"]
             metadata = meta["metadata"]
 
@@ -217,7 +248,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
             val_meter.update_stats(preds, ori_boxes, metadata)
 
         else:
-            preds = model(inputs)
+            preds, _ = model(inputs)
 
             if cfg.DATA.MULTI_LABEL:
                 if cfg.NUM_GPUS > 1:
@@ -352,6 +383,22 @@ def build_trainer(cfg):
         val_meter,
     )
 
+@torch.no_grad()
+def load_teacher_model(cfg):
+    logger.info("Load teacher config: {}".format(cfg.KD.CONFIG))
+    logger.info("Load teacher model: {}".format(cfg.KD.CHECKPOINT_FILE_PATH))
+    teacher_model = build_teacher_model(cfg)
+    if cfg.KD.CHECKPOINT_FILE_PATH != "":
+        cu.load_checkpoint(
+            cfg.KD.CHECKPOINT_FILE_PATH,
+            teacher_model,
+            cfg.NUM_GPUS > 1,
+            None,
+            inflation=False,
+            convert_from_caffe2=cfg.KD.CHECKPOINT_TYPE == "caffe2",
+        )
+    return teacher_model
+
 
 def train(cfg):
     """
@@ -369,6 +416,9 @@ def train(cfg):
     # Setup logging format.
     logging.setup_logging(cfg.OUTPUT_DIR)
 
+    # Build the teacher video model
+    teacher_model = load_teacher_model(cfg)
+    
     # Init multigrid.
     multigrid = None
     if cfg.MULTIGRID.LONG_CYCLE or cfg.MULTIGRID.SHORT_CYCLE:
@@ -381,15 +431,15 @@ def train(cfg):
     logger.info(pprint.pformat(cfg))
 
     # Build the video model and print model statistics.
-    model = build_model(cfg)
+    student_model = build_model(cfg)
     if du.is_master_proc() and cfg.LOG_MODEL_INFO:
-        misc.log_model_info(model, cfg, use_train_input=True)
+        misc.log_model_info(student_model, cfg, use_train_input=True)
 
     # Construct the optimizer.
-    optimizer = optim.construct_optimizer(model, cfg)
+    optimizer = optim.construct_optimizer(student_model, cfg)
 
     # Load a checkpoint to resume training if applicable.
-    start_epoch, best_top1_err, best_epoch = cu.load_train_checkpoint(cfg, model, optimizer)
+    start_epoch, best_top1_err, best_epoch = cu.load_train_checkpoint(cfg, student_model, optimizer)
 
     # Create the video train and val loaders.
     train_loader = loader.construct_loader(cfg, "train")
@@ -422,7 +472,7 @@ def train(cfg):
             cfg, changed = multigrid.update_long_cycle(cfg, cur_epoch)
             if changed:
                 (
-                    model,
+                    student_model,
                     optimizer,
                     train_loader,
                     val_loader,
@@ -439,25 +489,25 @@ def train(cfg):
                     last_checkpoint = cfg.TRAIN.CHECKPOINT_FILE_PATH
                 logger.info("Load from {}".format(last_checkpoint))
                 cu.load_checkpoint(
-                    last_checkpoint, model, cfg.NUM_GPUS > 1, optimizer
+                    last_checkpoint, student_model, cfg.NUM_GPUS > 1, optimizer
                 )
 
         # Shuffle the dataset.
         loader.shuffle_dataset(train_loader, cur_epoch)
         # Train for one epoch.
         train_epoch(
-            train_loader, model, optimizer, train_meter, cur_epoch, cfg, writer
+            train_loader, student_model, teacher_model, optimizer, train_meter, cur_epoch, cfg, writer
         )
 
         # Compute precise BN stats.
-        if cfg.BN.USE_PRECISE_STATS and len(get_bn_modules(model)) > 0:
+        if cfg.BN.USE_PRECISE_STATS and len(get_bn_modules(student_model)) > 0:
             calculate_and_update_precise_bn(
                 precise_bn_loader,
-                model,
+                student_model,
                 min(cfg.BN.NUM_BATCHES_PRECISE, len(precise_bn_loader)),
                 cfg.NUM_GPUS > 0,
             )
-        _ = misc.aggregate_sub_bn_stats(model)
+        _ = misc.aggregate_sub_bn_stats(student_model)
 
         # Save a checkpoint.
         if cu.is_checkpoint_epoch(
@@ -465,7 +515,7 @@ def train(cfg):
         ):
             cu.save_checkpoint(	
                 path_to_job=cfg.OUTPUT_DIR, 	
-                model=model, 	
+                model=student_model, 	
                 optimizer=optimizer, 	
                 epoch=cur_epoch, 	
                 cfg=cfg,	
@@ -476,14 +526,14 @@ def train(cfg):
         if misc.is_eval_epoch(
             cfg, cur_epoch, None if multigrid is None else multigrid.schedule
         ):
-            epoch_stats = eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer)
+            epoch_stats = eval_epoch(val_loader, student_model, val_meter, cur_epoch, cfg, writer)
             
             if best_top1_err == -1 or epoch_stats['top1_err'] < best_top1_err:	
                 best_top1_err = epoch_stats['top1_err']	
                 best_epoch = cur_epoch	
                 cu.save_checkpoint(	
                     path_to_job=cfg.OUTPUT_DIR, 	
-                    model=model, 	
+                    model=student_model, 	
                     optimizer=optimizer, 	
                     epoch=cur_epoch, 	
                     cfg=cfg,	
