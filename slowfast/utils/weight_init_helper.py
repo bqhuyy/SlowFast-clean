@@ -16,7 +16,7 @@ def init_weights(model, fc_init_std=0.01, zero_init_final_bn=True):
             every bottleneck.
     """
     for m in model.modules():
-        if isinstance(m, nn.Conv3d):
+        if isinstance(m, nn.Conv3d) or isinstance(m, nn.Conv2d):
             """
             Follow the initialization method proposed in:
             {He, Kaiming, et al.
@@ -25,7 +25,7 @@ def init_weights(model, fc_init_std=0.01, zero_init_final_bn=True):
             arXiv preprint arXiv:1502.01852 (2015)}
             """
             c2_msra_fill(m)
-        elif isinstance(m, nn.BatchNorm3d):
+        elif isinstance(m, nn.BatchNorm3d) or isinstance(m, nn.BatchNorm2d):
             if (
                 hasattr(m, "transform_final_bn")
                 and m.transform_final_bn
