@@ -40,6 +40,7 @@ class BasicTransform(nn.Module):
         inplace_relu=True,
         eps=1e-5,
         bn_mmt=0.1,
+        dilation=1,
         norm_module=nn.BatchNorm2d,
     ):
         """
@@ -354,7 +355,6 @@ class ResBlock(nn.Module):
     def forward(self, x, shift_buffer):
         c = x.size(1)
         x1, x2 = x[:, : c // 8], x[:, c // 8:]
-        
         if hasattr(self, "branch1"):
             x = self.branch1_bn(self.branch1(x)) + self.branch2(torch.cat((shift_buffer, x2), dim=1))
         else:

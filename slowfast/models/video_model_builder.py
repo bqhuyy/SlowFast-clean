@@ -652,6 +652,8 @@ class ResNet2D(nn.Module):
         dim_inner = num_groups * width_per_group
 
         temp_kernel = _TEMPORAL_KERNEL_BASIS[cfg.MODEL.ARCH]
+        
+        (dim_out2, dim_out3, dim_out4, dim_out5) = _RES_BLOCK_DIM_OUT[cfg.RESNET.TRANS_FUNC]
 
         self.n_segment = cfg.DATA.NUM_FRAMES
         
@@ -666,7 +668,7 @@ class ResNet2D(nn.Module):
 
         self.s2 = resnet2d_helper.ResStage(
             dim_in=[width_per_group],
-            dim_out=[width_per_group * 4],
+            dim_out=[width_per_group * dim_out2],
             dim_inner=[dim_inner],
             temp_kernel_sizes=temp_kernel[1],
             stride=cfg.RESNET.SPATIAL_STRIDES[0],
@@ -693,8 +695,8 @@ class ResNet2D(nn.Module):
             self.add_module("pathway{}_pool".format(pathway), pool)
 
         self.s3 = resnet2d_helper.ResStage(
-            dim_in=[width_per_group * 4],
-            dim_out=[width_per_group * 8],
+            dim_in=[width_per_group * dim_out2],
+            dim_out=[width_per_group * dim_out3],
             dim_inner=[dim_inner * 2],
             temp_kernel_sizes=temp_kernel[2],
             stride=cfg.RESNET.SPATIAL_STRIDES[1],
@@ -713,8 +715,8 @@ class ResNet2D(nn.Module):
         )
 
         self.s4 = resnet2d_helper.ResStage(
-            dim_in=[width_per_group * 8],
-            dim_out=[width_per_group * 16],
+            dim_in=[width_per_group * dim_out3],
+            dim_out=[width_per_group * dim_out4],
             dim_inner=[dim_inner * 4],
             temp_kernel_sizes=temp_kernel[3],
             stride=cfg.RESNET.SPATIAL_STRIDES[2],
@@ -733,8 +735,8 @@ class ResNet2D(nn.Module):
         )
 
         self.s5 = resnet2d_helper.ResStage(
-            dim_in=[width_per_group * 16],
-            dim_out=[width_per_group * 32],
+            dim_in=[width_per_group * dim_out4],
+            dim_out=[width_per_group * dim_out5],
             dim_inner=[dim_inner * 8],
             temp_kernel_sizes=temp_kernel[4],
             stride=cfg.RESNET.SPATIAL_STRIDES[3],
@@ -754,7 +756,7 @@ class ResNet2D(nn.Module):
 
         if self.enable_detection:
             self.head = head_helper.ResNetRoIHead(
-                dim_in=[width_per_group * 32],
+                dim_in=[width_per_group * dim_out5],
                 num_classes=cfg.MODEL.NUM_CLASSES,
                 pool_size=[[1, 1]],
                 resolution=[[cfg.DETECTION.ROI_XFORM_RESOLUTION] * 2],
@@ -765,13 +767,13 @@ class ResNet2D(nn.Module):
             )
         else:
             self.head = head_helper.ResNetBasicHead(
-                dim_in=[width_per_group * 32],
+                dim_in=[width_per_group * dim_out5],
                 num_classes=cfg.MODEL.NUM_CLASSES,
                 pool_size=[None, None]
                 if cfg.MULTIGRID.SHORT_CYCLE
                 else [
                     [
-                        cfg.DATA.NUM_FRAMES // pool_size[0][0],
+                        pool_size[0][0],
                         cfg.DATA.CROP_SIZE // 32 // pool_size[0][1],
                         cfg.DATA.CROP_SIZE // 32 // pool_size[0][2],
                     ]
@@ -796,9 +798,7 @@ class ResNet2D(nn.Module):
         x, s3 = self.s3(x, shift_buffer[1])
         x, s4 = self.s4(x, shift_buffer[2])
         x, s5 = self.s5(x, shift_buffer[3])
-        # (N*T, C, H, W) -> (N, C, T, H, W)
-        nt, c, h, w = x[0].size()
-        x[0] = x[0].view(nt // self.n_segment, self.n_segment, c, h, w).transpose(1, 2)
+        x[0] = x[0].unsqueeze(2)
         if self.enable_detection:
             x = self.head(x, bboxes)
         else:
@@ -861,6 +861,8 @@ class ResNetTSM(nn.Module):
         dim_inner = num_groups * width_per_group
 
         temp_kernel = _TEMPORAL_KERNEL_BASIS[cfg.MODEL.ARCH]
+        
+        (dim_out2, dim_out3, dim_out4, dim_out5) = _RES_BLOCK_DIM_OUT[cfg.RESNET.TRANS_FUNC]
 
         self.n_segment = cfg.DATA.NUM_FRAMES
         
@@ -875,7 +877,7 @@ class ResNetTSM(nn.Module):
 
         self.s2 = resnet2d_tsm_helper.ResStage(
             dim_in=[width_per_group],
-            dim_out=[width_per_group * 4],
+            dim_out=[width_per_group * dim_out2],
             dim_inner=[dim_inner],
             temp_kernel_sizes=temp_kernel[1],
             stride=cfg.RESNET.SPATIAL_STRIDES[0],
@@ -902,8 +904,8 @@ class ResNetTSM(nn.Module):
             self.add_module("pathway{}_pool".format(pathway), pool)
 
         self.s3 = resnet2d_tsm_helper.ResStage(
-            dim_in=[width_per_group * 4],
-            dim_out=[width_per_group * 8],
+            dim_in=[width_per_group * dim_out2],
+            dim_out=[width_per_group * dim_out3],
             dim_inner=[dim_inner * 2],
             temp_kernel_sizes=temp_kernel[2],
             stride=cfg.RESNET.SPATIAL_STRIDES[1],
@@ -922,8 +924,8 @@ class ResNetTSM(nn.Module):
         )
 
         self.s4 = resnet2d_tsm_helper.ResStage(
-            dim_in=[width_per_group * 8],
-            dim_out=[width_per_group * 16],
+            dim_in=[width_per_group * dim_out3],
+            dim_out=[width_per_group * dim_out4],
             dim_inner=[dim_inner * 4],
             temp_kernel_sizes=temp_kernel[3],
             stride=cfg.RESNET.SPATIAL_STRIDES[2],
@@ -942,8 +944,8 @@ class ResNetTSM(nn.Module):
         )
 
         self.s5 = resnet2d_tsm_helper.ResStage(
-            dim_in=[width_per_group * 16],
-            dim_out=[width_per_group * 32],
+            dim_in=[width_per_group * dim_out4],
+            dim_out=[width_per_group * dim_out5],
             dim_inner=[dim_inner * 8],
             temp_kernel_sizes=temp_kernel[4],
             stride=cfg.RESNET.SPATIAL_STRIDES[3],
@@ -963,7 +965,7 @@ class ResNetTSM(nn.Module):
 
         if self.enable_detection:
             self.head = head_helper.ResNetRoIHead(
-                dim_in=[width_per_group * 32],
+                dim_in=[width_per_group * dim_out5],
                 num_classes=cfg.MODEL.NUM_CLASSES,
                 pool_size=[[1, 1]],
                 resolution=[[cfg.DETECTION.ROI_XFORM_RESOLUTION] * 2],
@@ -974,7 +976,7 @@ class ResNetTSM(nn.Module):
             )
         else:
             self.head = head_helper.ResNetBasicHead(
-                dim_in=[width_per_group * 32],
+                dim_in=[width_per_group * dim_out5],
                 num_classes=cfg.MODEL.NUM_CLASSES,
                 pool_size=[None, None]
                 if cfg.MULTIGRID.SHORT_CYCLE

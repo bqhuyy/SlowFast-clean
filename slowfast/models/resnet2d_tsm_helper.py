@@ -41,6 +41,7 @@ class BasicTransform(nn.Module):
         inplace_relu=True,
         eps=1e-5,
         bn_mmt=0.1,
+        dilation=1,
         norm_module=nn.BatchNorm2d,
     ):
         """
@@ -72,14 +73,14 @@ class BasicTransform(nn.Module):
 
     def _construct(self, dim_in, dim_out, stride, norm_module):
         # Tx3x3, BN, ReLU.
-        self.a = nn.Conv2d(
+        self.a = TemporalShift(nn.Conv2d(
             dim_in,
             dim_out,
             kernel_size=[3, 3],
             stride=[stride, stride],
             padding=[1, 1],
             bias=False,
-        )
+        ))
         self.a_bn = norm_module(
             num_features=dim_out, eps=self._eps, momentum=self._bn_mmt
         )

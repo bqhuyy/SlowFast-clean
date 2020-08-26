@@ -149,28 +149,19 @@ if __name__ == "__main__":
         shift_buffer = [
             [
                 torch.zeros([1, 8, 56, 56]).cuda(),
-                torch.zeros([1, 32, 56, 56]).cuda(),
-                torch.zeros([1, 32, 56, 56]).cuda(),
+                torch.zeros([1, 8, 56, 56]).cuda(),
             ],
             [
-                torch.zeros([1, 32, 56, 56]).cuda(),
-                torch.zeros([1, 64, 28, 28]).cuda(),
-                torch.zeros([1, 64, 28, 28]).cuda(),
-                torch.zeros([1, 64, 28, 28]).cuda(),
+                torch.zeros([1, 8, 56, 56]).cuda(),
+                torch.zeros([1, 16, 28, 28]).cuda(),
             ],
             [
-                torch.zeros([1, 64, 28, 28]).cuda(),
-                torch.zeros([1, 128, 14, 14]).cuda(),
-                torch.zeros([1, 128, 14, 14]).cuda(),
-                torch.zeros([1, 128, 14, 14]).cuda(),
-                torch.zeros([1, 128, 14, 14]).cuda(),
-                torch.zeros([1, 128, 14, 14]).cuda(),
+                torch.zeros([1, 16, 28, 28]).cuda(),
+                torch.zeros([1, 32, 14, 14]).cuda(),
             ],
             [
-                torch.zeros([1, 128, 14, 14]).cuda(),
-                torch.zeros([1, 256, 7, 7]).cuda(),
-                torch.zeros([1, 256, 7, 7]).cuda(),
-                torch.zeros([1, 256, 7, 7]).cuda(),
+                torch.zeros([1, 32, 14, 14]).cuda(),
+                torch.zeros([1, 64, 7, 7]).cuda(),
             ]
         ]
         with torchfunc.Timer() as timer:

@@ -33,7 +33,7 @@ def shift_ops4(input, buffer, fold):
 
 
 class TemporalShift(nn.Module):
-    def __init__(self, net, n_segment=3, n_div=8, inplace=False):
+    def __init__(self, net, n_segment=8, n_div=8, inplace=False):
         super(TemporalShift, self).__init__()
         self.net = net
         self.n_segment = n_segment
@@ -44,7 +44,7 @@ class TemporalShift(nn.Module):
         return self.net(x)
 
     @staticmethod
-    def shift(x, n_segment, fold_div=3, inplace=False):
+    def shift(x, n_segment, fold_div=8, inplace=False):
         nt, c, h, w = x.size()
         n_batch = nt // n_segment
         x = x.view(n_batch, n_segment, c, h, w)
