@@ -46,7 +46,7 @@ SOLVER:
 MODEL:
   NUM_CLASSES: 40
   ARCH: slowfast
-  MODEL_NAME: Teacher_SlowFast
+  MODEL_NAME: Teacher_SlowFast_MobileNetV3
   LOSS_FUNC: cross_entropy
   DROPOUT_RATE: 0.5
 TEST:
