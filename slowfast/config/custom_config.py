@@ -38,3 +38,6 @@ def add_custom_config(_C):
 
     # fusion n_div
     _C.TSM.FUSION_N_DIV = [8, 8, 8, 8]
+    
+    _C.TEST.CLASS_LIST = 'filenames/kinetics-40'
+    
