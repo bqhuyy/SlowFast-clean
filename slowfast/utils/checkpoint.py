@@ -440,7 +440,7 @@ def load_test_checkpoint(cfg, model):
         logger.info(
             "Unknown way of loading checkpoint. Using with random initialization, only for debugging."
         )
-        epoch = -1
+        checkpoint_epoch = -1
         best_top1_err = -1
         best_epoch = -1
         
