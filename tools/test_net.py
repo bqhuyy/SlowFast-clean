@@ -48,8 +48,11 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
     model.eval()
     test_meter.iter_tic()
     inference_time = 0
+    result = []
+    with open(os.path.join(cfg.DATA.PATH_TO_DATA_DIR, 'class_list.txt'), 'r+') as f:
+        cls_label = [line.strip() for line in f.readlines()]
 
-    for cur_iter, (inputs, labels, video_idx, meta) in enumerate(test_loader):
+    for cur_iter, (inputs, labels, video_idx, meta, path) in enumerate(test_loader):
         if cfg.NUM_GPUS:
             # Transfer the data to the current GPU device.
             if isinstance(inputs, (list,)):
@@ -107,7 +110,10 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
                 preds = preds.cpu()
                 labels = labels.cpu()
                 video_idx = video_idx.cpu()
-
+            # Output to file
+            if du.is_master_proc():
+                for i in range(len(preds)):
+                    result.append(f'{path[0]}, {cls_label[labels.detach().cpu().numpy()[i]]}, {cls_label[preds.detach().cpu().numpy().argmax(axis=1)[i]]}')
             test_meter.iter_toc()
             # Update and log stats.
             test_meter.update_stats(
@@ -139,6 +145,9 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
 
     test_meter.finalize_metrics()
     test_meter.reset()
+    
+    with open(os.path.join(cfg.OUTPUT_DIR, 'result.txt'), 'w+') as f:
+        f.write('\n'.join(result))
     
     logger.info('=> Mean inference time for %d video clips: %.3fs' % (len(test_loader), inference_time / len(test_loader)))
 
