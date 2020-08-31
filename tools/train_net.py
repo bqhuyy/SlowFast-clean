@@ -294,7 +294,7 @@ def calculate_and_update_precise_bn(loader, model, num_iters=200, use_gpu=True):
     """
 
     def _gen_loader():
-        for inputs, _, _, _ in loader:
+        for inputs, _, _, _, _ in loader:
             if use_gpu:
                 if isinstance(inputs, (list,)):
                     for i in range(len(inputs)):
