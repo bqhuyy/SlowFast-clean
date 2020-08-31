@@ -863,10 +863,10 @@ class Teacher_SlowFast_MobileNetV3(nn.Module):
             x[pathway] = pool(x[pathway])
         x = self.s3(x)
         x = self.s3_fuse(x)
-#         feature3 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        feature3 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
         x = self.s4(x)
         x = self.s4_fuse(x)
-#         feature4 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        feature4 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
         x = self.s5(x)
         feature5 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
         if self.enable_detection:
@@ -874,7 +874,7 @@ class Teacher_SlowFast_MobileNetV3(nn.Module):
         else:
             x = self.head(x)
 #         return x, [feature2, feature3, feature4, feature5]
-        return x, [feature5]
+        return x, [feature3, feature4, feature5]
     
 @MODEL_REGISTRY.register()
 class Student_SlowFast_MobileNetV3(nn.Module):
@@ -988,17 +988,17 @@ class Student_SlowFast_MobileNetV3(nn.Module):
             n_segment=self.n_segment[1],
             n_div=cfg.TSM.FUSION_N_DIV[2],
         )
-#         self.s3_kd = KDStage(
-#             dim_in=[
-#                 40 + 40 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
-#                 40 // cfg.SLOWFAST.BETA_INV,
-#             ],
-#             dim_out=[
-#                 640,
-#                 64,
-#             ],
-#             n_segment=self.n_segment
-#         )
+        self.s3_kd = KDStage(
+            dim_in=[
+                40 + 40 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
+                40 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                640,
+                64,
+            ],
+            n_segment=self.n_segment
+        )
         
         self.s4 = MobilenetV3Stage(
             dim_in=[
@@ -1019,17 +1019,17 @@ class Student_SlowFast_MobileNetV3(nn.Module):
             n_segment=self.n_segment[1],
             n_div=cfg.TSM.FUSION_N_DIV[3],
         )
-#         self.s4_kd = KDStage(
-#             dim_in=[
-#                 112 + 112 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
-#                 112 // cfg.SLOWFAST.BETA_INV,
-#             ],
-#             dim_out=[
-#                 1280,
-#                 128,
-#             ],
-#             n_segment=self.n_segment
-#         )
+        self.s4_kd = KDStage(
+            dim_in=[
+                112 + 112 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
+                112 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                1280,
+                128,
+            ],
+            n_segment=self.n_segment
+        )
         
         self.s5 = MobilenetV3Stage(
             dim_in=[
@@ -1121,14 +1121,14 @@ class Student_SlowFast_MobileNetV3(nn.Module):
 #             feature2 = [F.normalize(kd2[0], dim=0), F.normalize(kd2[1], dim=0)]
         x = self.s3(x)
         x = self.s3_fuse(x)
-#         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-#             kd3 = self.s3_kd(x)
-#             feature3 = [F.normalize(kd3[0], dim=0), F.normalize(kd3[1], dim=0)]
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd3 = self.s3_kd(x)
+            feature3 = [F.normalize(kd3[0], dim=0), F.normalize(kd3[1], dim=0)]
         x = self.s4(x)
         x = self.s4_fuse(x)
-#         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-#             kd4 = self.s4_kd(x)
-#             feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd4 = self.s4_kd(x)
+            feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
         x = self.s5(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
             kd5 = self.s5_kd(x)
@@ -1143,6 +1143,6 @@ class Student_SlowFast_MobileNetV3(nn.Module):
             x = self.head(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
 #             return x, [feature2, feature3, feature4, feature5]
-            return x, [feature5]
+            return x, [feature3, feature4, feature5]
         else:
             return x
