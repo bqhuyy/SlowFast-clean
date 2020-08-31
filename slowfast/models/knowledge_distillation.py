@@ -449,7 +449,7 @@ class Teacher_SlowFast(nn.Module):
 #         feature3 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
         x = self.s4(x)
         x = self.s4_fuse(x)
-#         feature4 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        feature4 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
         x = self.s5(x)
         feature5 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
         if self.enable_detection:
@@ -457,7 +457,7 @@ class Teacher_SlowFast(nn.Module):
         else:
             x = self.head(x)
 #         return x, [feature1, feature2, feature3, feature4, feature5]
-        return x, [feature5]
+        return x, [feature4, feature5]
 
 
 @MODEL_REGISTRY.register()
@@ -663,16 +663,16 @@ class Student_SlowFast(nn.Module):
             cfg.SLOWFAST.ALPHA,
             norm_module=self.norm_module,
         )
-#         self.s4_kd = KDStage(
-#             dim_in=[
-#                 width_per_group * dim_out4 + width_per_group * dim_out4 // out_dim_ratio,
-#                 width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
-#             ],
-#             dim_out=[
-#                 width_per_group * 16 + width_per_group * 16 // out_dim_ratio,
-#                 width_per_group * 16 // cfg.SLOWFAST.BETA_INV,
-#             ]
-#         )
+        self.s4_kd = KDStage(
+            dim_in=[
+                width_per_group * dim_out4 + width_per_group * dim_out4 // out_dim_ratio,
+                width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                width_per_group * 16 + width_per_group * 16 // out_dim_ratio,
+                width_per_group * 16 // cfg.SLOWFAST.BETA_INV,
+            ]
+        )
 
         self.s5 = resnet_helper.ResStage(
             dim_in=[
@@ -779,9 +779,9 @@ class Student_SlowFast(nn.Module):
 #             feature3 = [F.normalize(kd3[0], dim=0), F.normalize(kd3[1], dim=0)]
         x = self.s4(x)
         x = self.s4_fuse(x)
-#         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
-#             kd4 = self.s4_kd(x)
-#             feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd4 = self.s4_kd(x)
+            feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
         x = self.s5(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
             kd5 = self.s5_kd(x)
@@ -792,6 +792,6 @@ class Student_SlowFast(nn.Module):
             x = self.head(x)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
 #             return x, [feature1, feature2, feature3, feature4, feature5]
-            return x, [feature5]
+            return x, [feature4, feature5]
         else:
             return x
