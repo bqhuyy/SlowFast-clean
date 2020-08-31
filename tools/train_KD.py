@@ -211,7 +211,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg, writer=None):
     model.eval()
     val_meter.iter_tic()
 
-    for cur_iter, (inputs, labels, _, meta) in enumerate(val_loader):
+    for cur_iter, (inputs, labels, _, meta, _) in enumerate(val_loader):
         if cfg.NUM_GPUS:
             # Transferthe data to the current GPU device.
             if isinstance(inputs, (list,)):
