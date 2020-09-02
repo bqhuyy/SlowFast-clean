@@ -30,6 +30,8 @@ def add_custom_config(_C):
     # Checkpoint types include `caffe2` or `pytorch`.
     _C.KD.CHECKPOINT_TYPE = "pytorch"
     
+    _C.KD.TEACHER_TRANS_FUNC = 'bottleneck_transform'
+    
     # TSM
     _C.TSM = CfgNode()
 
