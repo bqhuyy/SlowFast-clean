@@ -6,7 +6,7 @@ TRAIN:
   CHECKPOINT_PERIOD: 1
   AUTO_RESUME: True
 DATA:
-  PATH_TO_DATA_DIR: 'filenames/kinetics-20/interacting_with_animals'
+  PATH_TO_DATA_DIR: 'filenames/kinetics-20/interacting_with_animals/student'
   NUM_FRAMES: 32
   SAMPLING_RATE: 2
   TRAIN_JITTER_SCALES: [256, 320]
