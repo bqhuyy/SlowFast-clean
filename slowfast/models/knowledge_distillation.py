@@ -205,7 +205,6 @@ class Teacher_SlowFast(nn.Module):
                 comments of the config file.
         """
         super(Teacher_SlowFast, self).__init__()
-        print(cfg)
         self.norm_module = get_norm(cfg)
         self.enable_detection = cfg.DETECTION.ENABLE
         self.num_pathways = 2
@@ -457,7 +456,6 @@ class Teacher_SlowFast(nn.Module):
             x = self.head(x, bboxes)
         else:
             x = self.head(x)
-        print(feature1[0].shape, feature2[0].shape, feature3[0].shape, feature4[0].shape, feature5[0].shape)
         return x, [feature1, feature2, feature3, feature4, feature5]
 
 
@@ -792,7 +790,6 @@ class Student_SlowFast(nn.Module):
             x = self.head(x, bboxes)
         else:
             x = self.head(x)
-        print(feature1[0].shape, feature2[0].shape, feature3[0].shape, feature4[0].shape, feature5[0].shape)
         if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
             return x, [feature1, feature2, feature3, feature4, feature5]
         else:
