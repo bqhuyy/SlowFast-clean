@@ -13,7 +13,7 @@ from . import head_helper, resnet_helper, stem_helper
 from .build import MODEL_REGISTRY
 
 # Number of blocks for different stages given the model depth.
-_MODEL_STAGE_DEPTH = {50: (3, 4, 6, 3), 101: (3, 4, 23, 3), 18: (2, 2, 2, 2)}
+_MODEL_STAGE_DEPTH = {50: (3, 4, 6, 3), 101: (3, 4, 23, 3), 18: (2, 2, 2, 2), 9: (1, 1, 1, 1)}
 
 # Basis of temporal kernel sizes for each of the stage.
 _TEMPORAL_KERNEL_BASIS = {

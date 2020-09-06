@@ -70,14 +70,14 @@ def train_epoch(
 
         if cfg.DETECTION.ENABLE:
             # Compute the predictions.
-            student_preds, student_features = student_model(inputs, meta["boxes"])
+            student_preds, student_features = student_model(inputs.copy(), meta["boxes"])
             with torch.no_grad():
-                teacher_preds, teacher_features = teacher_model(inputs, meta["boxes"])
+                teacher_preds, teacher_features = teacher_model(inputs.copy(), meta["boxes"])
         else:
             # Perform the forward pass.
-            student_preds, student_features = student_model(inputs)
+            student_preds, student_features = student_model(inputs.copy())
             with torch.no_grad():
-                teacher_preds, teacher_features = teacher_model(inputs)
+                teacher_preds, teacher_features = teacher_model(inputs.copy())
         # Explicitly declare reduction to mean.
         # L2 loss for featuremap difference
         loss_mse_func = losses.get_loss_func('mse')(reduction="mean")
