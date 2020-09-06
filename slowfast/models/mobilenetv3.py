@@ -11,6 +11,7 @@ import slowfast.utils.weight_init_helper as init_helper
 from slowfast.models.batchnorm_helper import get_norm
 from .build import MODEL_REGISTRY
 from . import head_helper, resnet_helper, stem_helper
+from slowfast.models.video_model_builder import FuseFastToSlow
 
 
 class hswish(nn.Module):
@@ -551,3 +552,595 @@ class SlowFast_MobileNetV3(nn.Module):
         else:
             x = self.head(x)
         return x
+
+class KDStage(nn.Module):
+    def __init__(
+        self, 
+        dim_in,
+        dim_out,
+        n_segment,
+    ):
+        super(KDStage, self).__init__()
+        assert (
+            len(
+                {
+                    len(dim_in),
+                    len(dim_out),
+                }
+            )
+            == 1
+        )
+        self.num_pathways = len(dim_in)
+        self.n_segment = n_segment
+        for pathway in range(self.num_pathways):
+            kd = PWConv(dim_in[pathway], dim_out[pathway])
+            self.add_module("pathway{}_kd".format(pathway), kd)
+
+    def forward(self, inputs):
+        output = []
+        for pathway in range(self.num_pathways):
+            x = inputs[pathway]
+            m = getattr(self, "pathway{}_kd".format(pathway))
+            x = m(x)
+            nt, c, h, w = x.size()
+            x = x.view(nt // self.n_segment[pathway], self.n_segment[pathway], c, h, w).transpose(1, 2)
+            output.append(x)
+        return output
+    
+class PWConv(nn.Module):
+    def __init__(
+        self, 
+        dim_in,
+        dim_out,
+    ):
+        super(PWConv, self).__init__()
+        self.pwconv = nn.Conv2d(dim_in, dim_out, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn = nn.BatchNorm2d(dim_out)
+        self.relu = nn.ReLU(True)
+
+    def forward(self, x):
+        x = self.pwconv(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        return x
+    
+@MODEL_REGISTRY.register()
+class Teacher_SlowFast_MobileNetV3(nn.Module):
+    """
+    SlowFast model builder for SlowFast network.
+
+    Christoph Feichtenhofer, Haoqi Fan, Jitendra Malik, and Kaiming He.
+    "SlowFast networks for video recognition."
+    https://arxiv.org/pdf/1812.03982.pdf
+    """
+
+    def __init__(self, cfg):
+        """
+        The `__init__` method of any subclass should also contain these
+            arguments.
+        Args:
+            cfg (CfgNode): model building configs, details are in the
+                comments of the config file.
+        """
+        super(Teacher_SlowFast_MobileNetV3, self).__init__()
+        self.norm_module = get_norm(cfg)
+        self.enable_detection = cfg.DETECTION.ENABLE
+        self.num_pathways = 2
+        self.cfg = cfg
+        self._construct_network(cfg)
+        init_helper.init_weights(
+            self, cfg.MODEL.FC_INIT_STD, cfg.RESNET.ZERO_INIT_FINAL_BN
+        )
+
+    def _construct_network(self, cfg):
+        """
+        Builds a SlowFast model. The first pathway is the Slow pathway and the
+            second pathway is the Fast pathway.
+        Args:
+            cfg (CfgNode): model building configs, details are in the
+                comments of the config file.
+        """
+        assert cfg.MODEL.ARCH in _POOL1.keys()
+        pool_size = _POOL1[cfg.MODEL.ARCH]
+        assert len({len(pool_size), self.num_pathways}) == 1
+        assert cfg.RESNET.DEPTH in _MODEL_STAGE_DEPTH.keys()
+
+        (d2, d3, d4, d5) = _MODEL_STAGE_DEPTH[cfg.RESNET.DEPTH]
+
+        num_groups = cfg.RESNET.NUM_GROUPS
+        width_per_group = cfg.RESNET.WIDTH_PER_GROUP
+        dim_inner = num_groups * width_per_group
+        out_dim_ratio = (
+            cfg.SLOWFAST.BETA_INV // cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO
+        )
+        
+        (dim_out2, dim_out3, dim_out4, dim_out5) = _RES_BLOCK_DIM_OUT[cfg.RESNET.TRANS_FUNC]
+
+        temp_kernel = _TEMPORAL_KERNEL_BASIS[cfg.MODEL.ARCH]
+
+        self.s1 = stem_helper.VideoModelStem(
+            dim_in=cfg.DATA.INPUT_CHANNEL_NUM,
+            dim_out=[width_per_group, width_per_group // cfg.SLOWFAST.BETA_INV],
+            kernel=[temp_kernel[0][0] + [7, 7], temp_kernel[0][1] + [7, 7]],
+            stride=[[1, 2, 2]] * 2,
+            padding=[
+                [temp_kernel[0][0][0] // 2, 3, 3],
+                [temp_kernel[0][1][0] // 2, 3, 3],
+            ],
+            norm_module=self.norm_module,
+        )
+        self.s1_fuse = FuseFastToSlow(
+            width_per_group // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+        )
+
+        self.s2 = resnet_helper.ResStage(
+            dim_in=[
+                width_per_group + width_per_group // out_dim_ratio,
+                width_per_group // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                width_per_group * dim_out2,
+                width_per_group * dim_out2 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_inner=[dim_inner, dim_inner // cfg.SLOWFAST.BETA_INV],
+            temp_kernel_sizes=temp_kernel[1],
+            stride=cfg.RESNET.SPATIAL_STRIDES[0],
+            num_blocks=[d2] * 2,
+            num_groups=[num_groups] * 2,
+            num_block_temp_kernel=cfg.RESNET.NUM_BLOCK_TEMP_KERNEL[0],
+            nonlocal_inds=cfg.NONLOCAL.LOCATION[0],
+            nonlocal_group=cfg.NONLOCAL.GROUP[0],
+            nonlocal_pool=cfg.NONLOCAL.POOL[0],
+            instantiation=cfg.NONLOCAL.INSTANTIATION,
+            trans_func_name=cfg.RESNET.TRANS_FUNC,
+            dilation=cfg.RESNET.SPATIAL_DILATIONS[0],
+            norm_module=self.norm_module,
+        )
+        self.s2_fuse = FuseFastToSlow(
+            width_per_group * dim_out2 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+        )
+
+        for pathway in range(self.num_pathways):
+            pool = nn.MaxPool3d(
+                kernel_size=pool_size[pathway],
+                stride=pool_size[pathway],
+                padding=[0, 0, 0],
+            )
+            self.add_module("pathway{}_pool".format(pathway), pool)
+
+        self.s3 = resnet_helper.ResStage(
+            dim_in=[
+                width_per_group * dim_out2 + width_per_group * dim_out2 // out_dim_ratio,
+                width_per_group * dim_out2 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                width_per_group * dim_out3,
+                width_per_group * dim_out3 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_inner=[dim_inner * 2, dim_inner * 2 // cfg.SLOWFAST.BETA_INV],
+            temp_kernel_sizes=temp_kernel[2],
+            stride=cfg.RESNET.SPATIAL_STRIDES[1],
+            num_blocks=[d3] * 2,
+            num_groups=[num_groups] * 2,
+            num_block_temp_kernel=cfg.RESNET.NUM_BLOCK_TEMP_KERNEL[1],
+            nonlocal_inds=cfg.NONLOCAL.LOCATION[1],
+            nonlocal_group=cfg.NONLOCAL.GROUP[1],
+            nonlocal_pool=cfg.NONLOCAL.POOL[1],
+            instantiation=cfg.NONLOCAL.INSTANTIATION,
+            trans_func_name=cfg.RESNET.TRANS_FUNC,
+            dilation=cfg.RESNET.SPATIAL_DILATIONS[1],
+            norm_module=self.norm_module,
+        )
+        self.s3_fuse = FuseFastToSlow(
+            width_per_group * dim_out3 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+        )
+
+        self.s4 = resnet_helper.ResStage(
+            dim_in=[
+                width_per_group * dim_out3 + width_per_group * dim_out3 // out_dim_ratio,
+                width_per_group * dim_out3 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                width_per_group * dim_out4,
+                width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_inner=[dim_inner * 4, dim_inner * 4 // cfg.SLOWFAST.BETA_INV],
+            temp_kernel_sizes=temp_kernel[3],
+            stride=cfg.RESNET.SPATIAL_STRIDES[2],
+            num_blocks=[d4] * 2,
+            num_groups=[num_groups] * 2,
+            num_block_temp_kernel=cfg.RESNET.NUM_BLOCK_TEMP_KERNEL[2],
+            nonlocal_inds=cfg.NONLOCAL.LOCATION[2],
+            nonlocal_group=cfg.NONLOCAL.GROUP[2],
+            nonlocal_pool=cfg.NONLOCAL.POOL[2],
+            instantiation=cfg.NONLOCAL.INSTANTIATION,
+            trans_func_name=cfg.RESNET.TRANS_FUNC,
+            dilation=cfg.RESNET.SPATIAL_DILATIONS[2],
+            norm_module=self.norm_module,
+        )
+        self.s4_fuse = FuseFastToSlow(
+            width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+        )
+
+        self.s5 = resnet_helper.ResStage(
+            dim_in=[
+                width_per_group * dim_out4 + width_per_group * dim_out4 // out_dim_ratio,
+                width_per_group * dim_out4 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                width_per_group * dim_out5,
+                width_per_group * dim_out5 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_inner=[dim_inner * 8, dim_inner * 8 // cfg.SLOWFAST.BETA_INV],
+            temp_kernel_sizes=temp_kernel[4],
+            stride=cfg.RESNET.SPATIAL_STRIDES[3],
+            num_blocks=[d5] * 2,
+            num_groups=[num_groups] * 2,
+            num_block_temp_kernel=cfg.RESNET.NUM_BLOCK_TEMP_KERNEL[3],
+            nonlocal_inds=cfg.NONLOCAL.LOCATION[3],
+            nonlocal_group=cfg.NONLOCAL.GROUP[3],
+            nonlocal_pool=cfg.NONLOCAL.POOL[3],
+            instantiation=cfg.NONLOCAL.INSTANTIATION,
+            trans_func_name=cfg.RESNET.TRANS_FUNC,
+            dilation=cfg.RESNET.SPATIAL_DILATIONS[3],
+            norm_module=self.norm_module,
+        )
+
+        if cfg.DETECTION.ENABLE:
+            self.head = head_helper.ResNetRoIHead(
+                dim_in=[
+                    width_per_group * dim_out5,
+                    width_per_group * dim_out5 // cfg.SLOWFAST.BETA_INV,
+                ],
+                num_classes=cfg.MODEL.NUM_CLASSES,
+                pool_size=[
+                    [
+                        cfg.DATA.NUM_FRAMES
+                        // cfg.SLOWFAST.ALPHA
+                        // pool_size[0][0],
+                        1,
+                        1,
+                    ],
+                    [cfg.DATA.NUM_FRAMES // pool_size[1][0], 1, 1],
+                ],
+                resolution=[[cfg.DETECTION.ROI_XFORM_RESOLUTION] * 2] * 2,
+                scale_factor=[cfg.DETECTION.SPATIAL_SCALE_FACTOR] * 2,
+                dropout_rate=cfg.MODEL.DROPOUT_RATE,
+                act_func=cfg.MODEL.HEAD_ACT,
+                aligned=cfg.DETECTION.ALIGNED,
+            )
+        else:
+            self.head = head_helper.ResNetBasicHead(
+                dim_in=[
+                    width_per_group * dim_out5,
+                    width_per_group * dim_out5 // cfg.SLOWFAST.BETA_INV,
+                ],
+                num_classes=cfg.MODEL.NUM_CLASSES,
+                pool_size=[None, None]
+                if cfg.MULTIGRID.SHORT_CYCLE
+                else [
+                    [
+                        cfg.DATA.NUM_FRAMES
+                        // cfg.SLOWFAST.ALPHA
+                        // pool_size[0][0],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[0][1],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[0][2],
+                    ],
+                    [
+                        cfg.DATA.NUM_FRAMES // pool_size[1][0],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[1][1],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[1][2],
+                    ],
+                ],  # None for AdaptiveAvgPool3d((1, 1, 1))
+                dropout_rate=cfg.MODEL.DROPOUT_RATE,
+                act_func=cfg.MODEL.HEAD_ACT,
+            )
+
+    def forward(self, x, bboxes=None):
+        x = self.s1(x)
+        x = self.s1_fuse(x)
+        x = self.s2(x)
+        x = self.s2_fuse(x)
+        feature2 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        for pathway in range(self.num_pathways):
+            pool = getattr(self, "pathway{}_pool".format(pathway))
+            x[pathway] = pool(x[pathway])
+        x = self.s3(x)
+        x = self.s3_fuse(x)
+        feature3 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        x = self.s4(x)
+        x = self.s4_fuse(x)
+        feature4 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        x = self.s5(x)
+        feature5 = [F.normalize(x[0], dim=0), F.normalize(x[1], dim=0)]
+        if self.enable_detection:
+            x = self.head(x, bboxes)
+        else:
+            x = self.head(x)
+        return x, [feature2, feature3, feature4, feature5]
+    
+@MODEL_REGISTRY.register()
+class Student_SlowFast_MobileNetV3(nn.Module):
+    """
+    SlowFast model builder for SlowFast network.
+
+    Christoph Feichtenhofer, Haoqi Fan, Jitendra Malik, and Kaiming He.
+    "SlowFast networks for video recognition."
+    https://arxiv.org/pdf/1812.03982.pdf
+    """
+
+    def __init__(self, cfg):
+        """
+        The `__init__` method of any subclass should also contain these
+            arguments.
+        Args:
+            cfg (CfgNode): model building configs, details are in the
+                comments of the config file.
+        """
+        super(Student_SlowFast_MobileNetV3, self).__init__()
+        self.norm_module = nn.BatchNorm2d
+        self.enable_detection = cfg.DETECTION.ENABLE
+        self.num_pathways = 2
+        self.cfg = cfg
+        self._construct_network(cfg)
+        init_helper.init_weights(
+            self, cfg.MODEL.FC_INIT_STD, cfg.RESNET.ZERO_INIT_FINAL_BN
+        )
+
+    def _construct_network(self, cfg):
+        """
+        Builds a SlowFast model. The first pathway is the Slow pathway and the
+            second pathway is the Fast pathway.
+        Args:
+            cfg (CfgNode): model building configs, details are in the
+                comments of the config file.
+        """
+        assert cfg.MODEL.ARCH in _POOL1.keys()
+        pool_size = _POOL1[cfg.MODEL.ARCH]
+        
+        out_dim_ratio = (
+            cfg.SLOWFAST.BETA_INV // cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO
+        )
+        
+        self.n_segment = [
+            cfg.DATA.NUM_FRAMES // cfg.SLOWFAST.ALPHA, 
+            cfg.DATA.NUM_FRAMES
+        ]
+        
+        self.s1 = MobileNetV3Stem(
+            dim_in=cfg.DATA.INPUT_CHANNEL_NUM,
+            beta_inv=[1, cfg.SLOWFAST.BETA_INV],
+        )
+        self.s1_fuse = FuseFastToSlow2D(
+            16 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+            n_segment=self.n_segment[1],
+            n_div=cfg.TSM.FUSION_N_DIV[0],
+        )
+        
+        self.s2 = MobilenetV3Stage(
+            dim_in=[
+                16 + 16 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA, 
+                16
+            ],
+            beta_inv=[1, cfg.SLOWFAST.BETA_INV],
+            stage_idx=2,
+            n_segment=self.n_segment,
+            n_div=cfg.TSM.N_DIV[0],
+        )
+        self.s2_fuse = FuseFastToSlow2D(
+            24 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+            n_segment=self.n_segment[1],
+            n_div=cfg.TSM.FUSION_N_DIV[1],
+        )
+        self.s2_kd = KDStage(
+            dim_in=[
+                24 + 24 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
+                24 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                320,
+                32,
+            ],
+            n_segment=self.n_segment
+        )
+        
+        self.s3 = MobilenetV3Stage(
+            dim_in=[
+                24 + 24 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA, 
+                24
+            ],
+            beta_inv=[1, cfg.SLOWFAST.BETA_INV],
+            stage_idx=3,
+            n_segment=self.n_segment,
+            n_div=cfg.TSM.N_DIV[1],
+        )
+        self.s3_fuse = FuseFastToSlow2D(
+            40 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+            n_segment=self.n_segment[1],
+            n_div=cfg.TSM.FUSION_N_DIV[2],
+        )
+        self.s3_kd = KDStage(
+            dim_in=[
+                40 + 40 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
+                40 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                640,
+                64,
+            ],
+            n_segment=self.n_segment
+        )
+        
+        self.s4 = MobilenetV3Stage(
+            dim_in=[
+                40 + 40 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA, 
+                40
+            ],
+            beta_inv=[1, cfg.SLOWFAST.BETA_INV],
+            stage_idx=4,
+            n_segment=self.n_segment,
+            n_div=cfg.TSM.N_DIV[2],
+        )
+        self.s4_fuse = FuseFastToSlow2D(
+            112 // cfg.SLOWFAST.BETA_INV,
+            cfg.SLOWFAST.FUSION_CONV_CHANNEL_RATIO,
+            cfg.SLOWFAST.FUSION_KERNEL_SZ,
+            cfg.SLOWFAST.ALPHA,
+            norm_module=self.norm_module,
+            n_segment=self.n_segment[1],
+            n_div=cfg.TSM.FUSION_N_DIV[3],
+        )
+        self.s4_kd = KDStage(
+            dim_in=[
+                112 + 112 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA,
+                112 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                1280,
+                128,
+            ],
+            n_segment=self.n_segment
+        )
+        
+        self.s5 = MobilenetV3Stage(
+            dim_in=[
+                112 + 112 // out_dim_ratio // cfg.SLOWFAST.ALPHA * cfg.SLOWFAST.ALPHA, 
+                112
+            ],
+            beta_inv=[1, cfg.SLOWFAST.BETA_INV],
+            stage_idx=5,
+            n_segment=self.n_segment,
+            n_div=cfg.TSM.N_DIV[3],
+        )
+        self.s5_kd = KDStage(
+            dim_in=[
+                960,
+                960 // cfg.SLOWFAST.BETA_INV,
+            ],
+            dim_out=[
+                2048,
+                256,
+            ],
+            n_segment=self.n_segment
+        )
+
+        if cfg.DETECTION.ENABLE:
+            self.head = head_helper.ResNetRoIHead(
+                dim_in=[
+                    960,
+                    960 // cfg.SLOWFAST.BETA_INV,
+                ],
+                num_classes=cfg.MODEL.NUM_CLASSES,
+                pool_size=[
+                    [
+                        cfg.DATA.NUM_FRAMES
+                        // cfg.SLOWFAST.ALPHA
+                        // pool_size[0][0],
+                        1,
+                        1,
+                    ],
+                    [cfg.DATA.NUM_FRAMES // pool_size[1][0], 1, 1],
+                ],
+                resolution=[[cfg.DETECTION.ROI_XFORM_RESOLUTION] * 2] * 2,
+                scale_factor=[cfg.DETECTION.SPATIAL_SCALE_FACTOR] * 2,
+                dropout_rate=cfg.MODEL.DROPOUT_RATE,
+                act_func=cfg.MODEL.HEAD_ACT,
+                aligned=cfg.DETECTION.ALIGNED,
+            )
+        else:
+            self.head = head_helper.ResNetBasicHead(
+                dim_in=[
+                    960,
+                    960 // cfg.SLOWFAST.BETA_INV,
+                ],
+                num_classes=cfg.MODEL.NUM_CLASSES,
+                pool_size=[None, None]
+                if cfg.MULTIGRID.SHORT_CYCLE
+                else [
+                    [
+                        cfg.DATA.NUM_FRAMES
+                        // cfg.SLOWFAST.ALPHA
+                        // pool_size[0][0],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[0][1],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[0][2],
+                    ],
+                    [
+                        cfg.DATA.NUM_FRAMES // pool_size[1][0],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[1][1],
+                        cfg.DATA.CROP_SIZE // 32 // pool_size[1][2],
+                    ],
+                ],  # None for AdaptiveAvgPool3d((1, 1, 1))
+                dropout_rate=cfg.MODEL.DROPOUT_RATE,
+                act_func=cfg.MODEL.HEAD_ACT,
+            )
+
+    def forward(self, x, bboxes=None, reshape=True):
+        if reshape:
+            # (N, C, T, H, W) -> (N*T, C, H, W)
+            for pathway in range(self.num_pathways):
+                n, c, t, h, w = x[pathway].size()
+                x[pathway] = x[pathway].transpose(1, 2).contiguous().view(n*t, c, h, w)
+        else:
+            # (N, T*C, H, W) -> (N*T, C, H, W)
+            x = [i.view((-1, 3) + i.size()[-2:]) for i in x]
+        x = self.s1(x)
+        x = self.s1_fuse(x)
+        x = self.s2(x)
+        x = self.s2_fuse(x)
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd2 = self.s2_kd(x)
+            feature2 = [F.normalize(kd2[0], dim=0), F.normalize(kd2[1], dim=0)]
+        x = self.s3(x)
+        x = self.s3_fuse(x)
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd3 = self.s3_kd(x)
+            feature3 = [F.normalize(kd3[0], dim=0), F.normalize(kd3[1], dim=0)]
+        x = self.s4(x)
+        x = self.s4_fuse(x)
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd4 = self.s4_kd(x)
+            feature4 = [F.normalize(kd4[0], dim=0), F.normalize(kd4[1], dim=0)]
+        x = self.s5(x)
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            kd5 = self.s5_kd(x)
+            feature5 = [F.normalize(kd5[0], dim=0), F.normalize(kd5[1], dim=0)]
+        # (N*T, C, H, W) -> (N, C, T, H, W)
+        for pathway in range(self.num_pathways):
+            nt, c, h, w = x[pathway].size()
+            x[pathway] = x[pathway].view(nt // self.n_segment[pathway], self.n_segment[pathway], c, h, w).transpose(1, 2)
+        if self.enable_detection:
+            x = self.head(x, bboxes)
+        else:
+            x = self.head(x)
+        if self.cfg.TRAIN.ENABLE and self.cfg.KD.ENABLE:
+            return x, [feature2, feature3, feature4, feature5]
+        else:
+            return x
