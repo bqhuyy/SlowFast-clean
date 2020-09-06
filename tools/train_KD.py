@@ -95,7 +95,7 @@ def train_epoch(
         for s_features, t_features in zip(student_features, teacher_features):
             for i in range(2):
                 #mse loss
-                loss_mse.append(loss_mse_func(s_features[i], t_features[i]))
+                loss_mse.append(loss_mse_func(s_features[i], t_features[i]) * (alpha * T * T))
 
                 #kl divergence loss 
                 b, c, t, h, w = s_features[i].shape
@@ -123,7 +123,7 @@ def train_epoch(
             train_meter.iter_toc()
             # Update and log stats.
             train_meter.update_stats(None, None, None, loss, lr)
-            # write to tensorboard format if available.
+            # write to tensorboard format if available.T
             if writer is not None:
                 writer.add_scalars(
                     {"Train/loss": loss, "Train/lr": lr, "Train/mse": sum(loss_mse), "Train/loss_kl": sum(loss_kl), "Train/loss_pred": loss_pred},
